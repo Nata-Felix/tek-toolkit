@@ -22,6 +22,7 @@ O **TEK Toolkit** transforma procedimentos extensos de implantação e suporte e
 - Atualização de versões do sistema com validação das etapas.
 - Instalação e correção do Crystal Reports Runtime.
 - Instalação de .NET Framework e Visual C++ Redistributable.
+- Instalação e validação do Universal CRT/KB2999226 no Windows 7 e no Windows Server 2012 R2.
 - Configuração e recuperação do Firebird.
 - Preparação de rede, compartilhamentos SMB e mapeamentos.
 - Suspensão e restauração controlada de compartilhamentos durante atualizações.
