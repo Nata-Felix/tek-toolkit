@@ -15,8 +15,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("TekFarmaInstaller")]
 [assembly: AssemblyProduct("TEK Toolkit")]
 [assembly: AssemblyCompany("SOLPPE")]
-[assembly: AssemblyVersion("1.0.13.0")]
-[assembly: AssemblyFileVersion("1.0.13.0")]
+[assembly: AssemblyVersion("1.0.14.0")]
+[assembly: AssemblyFileVersion("1.0.14.0")]
 
 namespace TekFarmaInstaller
 {
@@ -76,7 +76,7 @@ namespace TekFarmaInstaller
 
         public InstallerForm()
         {
-            Text = "Instalador TekFarma / Crystal";
+            Text = "Instalador TekFarma / Crystal - v1.0.14";
             Width = 1024;
             Height = 660;
             MinimumSize = new Size(1024, 660);
@@ -699,9 +699,8 @@ namespace TekFarmaInstaller
             {
                 AddRelease(plan, "dotnet48.exe");
 
-                if (windows7Compatibility)
+                if (IsWindows7())
                 {
-                    AddRelease(plan, "VC_redist.x86.Win7.exe");
                     if (Environment.Is64BitOperatingSystem)
                     {
                         AddRelease(plan, "Windows6.1-KB2999226-x64.msu");
@@ -710,6 +709,15 @@ namespace TekFarmaInstaller
                     {
                         AddRelease(plan, "Windows6.1-KB2999226-x86.msu");
                     }
+                }
+                else if (IsWindows81OrServer2012R2() && Environment.Is64BitOperatingSystem)
+                {
+                    AddRelease(plan, "Windows8.1-KB2999226-x64.msu");
+                }
+
+                if (windows7Compatibility)
+                {
+                    AddRelease(plan, "VC_redist.x86.Win7.exe");
                 }
                 else
                 {
@@ -778,6 +786,12 @@ namespace TekFarmaInstaller
         {
             Version version = Environment.OSVersion.Version;
             return version.Major == 6 && version.Minor == 1;
+        }
+
+        private static bool IsWindows81OrServer2012R2()
+        {
+            Version version = Environment.OSVersion.Version;
+            return version.Major == 6 && version.Minor == 3;
         }
 
         private TimeSpan GetDownloadCacheAge(DownloadItem item)
@@ -1047,6 +1061,11 @@ namespace TekFarmaInstaller
                 return "D919EFD9264DFAE5D63E00602143DCF510CD849AFEE298F17893C94937725684";
             }
 
+            if (item != null && String.Equals(item.FileName, "Windows8.1-KB2999226-x64.msu", StringComparison.OrdinalIgnoreCase))
+            {
+                return "9F707096C7D279ED4BC2A40BA695EFAC69C20406E0CA97E2B3E08443C6381D15";
+            }
+
             return null;
         }
 
@@ -1271,7 +1290,8 @@ namespace TekFarmaInstaller
             }
 
             if (String.Equals(item.FileName, "Windows6.1-KB2999226-x86.msu", StringComparison.OrdinalIgnoreCase) ||
-                String.Equals(item.FileName, "Windows6.1-KB2999226-x64.msu", StringComparison.OrdinalIgnoreCase))
+                String.Equals(item.FileName, "Windows6.1-KB2999226-x64.msu", StringComparison.OrdinalIgnoreCase) ||
+                String.Equals(item.FileName, "Windows8.1-KB2999226-x64.msu", StringComparison.OrdinalIgnoreCase))
             {
                 return IsUniversalCrtInstalled();
             }
@@ -1282,12 +1302,14 @@ namespace TekFarmaInstaller
         private bool IsUniversalCrtInstalled()
         {
             Version version = Environment.OSVersion.Version;
-            if (version.Major != 6 || version.Minor != 1) return true;
+            if (version.Major != 6 || (version.Minor != 1 && version.Minor != 2 && version.Minor != 3)) return true;
 
             string systemDirectory = Environment.Is64BitOperatingSystem
                 ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SysWOW64")
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32");
-            return File.Exists(Path.Combine(systemDirectory, "ucrtbase.dll"));
+            string apiSet = Path.Combine(systemDirectory, "api-ms-win-crt-runtime-l1-1-0.dll");
+            if (!File.Exists(apiSet)) apiSet = Path.Combine(systemDirectory, "downlevel", "api-ms-win-crt-runtime-l1-1-0.dll");
+            return File.Exists(Path.Combine(systemDirectory, "ucrtbase.dll")) && File.Exists(apiSet);
         }
 
         private bool IsDotNet48Installed()

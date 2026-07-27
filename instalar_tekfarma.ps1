@@ -19,6 +19,7 @@ $VCx86Win7 = Join-Path $Base "VC_redist.x86.Win7.exe"
 $VCx64 = Join-Path $Base "VC_redist.x64.exe"
 $UcrtWin7x86 = Join-Path $Base "Windows6.1-KB2999226-x86.msu"
 $UcrtWin7x64 = Join-Path $Base "Windows6.1-KB2999226-x64.msu"
+$UcrtWin81x64 = Join-Path $Base "Windows8.1-KB2999226-x64.msu"
 $CrystalMsi = Join-Path $Base "CRRuntime_32bit_13_0_39.msi"
 $FixZip = Join-Path $Base "crdb_adoplus.zip"
 
@@ -40,6 +41,7 @@ $TempFix = "C:\Windows\Temp\crdb_adoplus_fix"
 $ServidorShare = "\\SERVIDOR\TekSoftware"
 $VersaoWindows = [Environment]::OSVersion.Version
 $EhWindows7 = ($VersaoWindows.Major -eq 6 -and $VersaoWindows.Minor -eq 1)
+$EhWindows81 = ($VersaoWindows.Major -eq 6 -and $VersaoWindows.Minor -eq 3)
 $Sistema64Bits = ($env:PROCESSOR_ARCHITEW6432 -eq "AMD64" -or $env:PROCESSOR_ARCHITECTURE -eq "AMD64")
 $PastaSistemaX86 = Join-Path $env:WINDIR "System32"
 if ($Sistema64Bits) {
@@ -480,25 +482,69 @@ function RepararVisualCppWin7AposCrystal {
     return (InstalarExe $VCx86Win7 "/install /quiet /norestart" "Reinstalacao do Visual C++ x86 para Windows 7")
 }
 
-function InstalarAtualizacaoUcrtWindows7 {
-    if (!$EhWindows7) {
-        return $true
-    }
-
+function Test-UcrtCompleto {
     $UcrtBase = Join-Path $PastaSistemaX86 "ucrtbase.dll"
-    if (Test-Path $UcrtBase) {
-        LogMsg "Universal CRT do Windows 7 ja esta instalado."
+    $ApiSetUcrt = Join-Path $PastaSistemaX86 "api-ms-win-crt-runtime-l1-1-0.dll"
+    if (!(Test-Path $ApiSetUcrt)) {
+        $ApiSetUcrt = Join-Path $PastaSistemaX86 "downlevel\api-ms-win-crt-runtime-l1-1-0.dll"
+    }
+
+    return ((Test-Path $UcrtBase) -and (Test-Path $ApiSetUcrt))
+}
+
+function Test-KbInstalado {
+    param([string]$Kb)
+
+    try {
+        if (Get-HotFix -Id $Kb -ErrorAction SilentlyContinue) {
+            return $true
+        }
+    }
+    catch {
+    }
+
+    try {
+        $PacotesCbs = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\Packages"
+        return ($null -ne (Get-ChildItem $PacotesCbs -ErrorAction SilentlyContinue | Where-Object {
+            $_.PSChildName -like "*$Kb*"
+        } | Select-Object -First 1))
+    }
+    catch {
+        return $false
+    }
+}
+
+function InstalarAtualizacaoUcrtLegado {
+    if (!$EhWindows7 -and !$EhWindows81) {
         return $true
     }
 
-    if ($VersaoWindows.Build -lt 7601) {
+    if (Test-UcrtCompleto) {
+        LogMsg "Universal CRT e API Set de 32 bits ja estao instalados."
+        return $true
+    }
+
+    if ($EhWindows7 -and $VersaoWindows.Build -lt 7601) {
         LogMsg "ERRO: Windows 7 SP1 e obrigatorio para instalar o Crystal Runtime."
         return $false
     }
 
-    $Pacote = $UcrtWin7x86
-    if ($Sistema64Bits) {
-        $Pacote = $UcrtWin7x64
+    if ($EhWindows81) {
+        if (!$Sistema64Bits) {
+            LogMsg "ERRO: O pacote UCRT para Windows 8.1 de 32 bits nao esta disponivel neste instalador."
+            return $false
+        }
+
+        $Pacote = $UcrtWin81x64
+        if (!(Test-KbInstalado "KB2919355")) {
+            LogMsg "AVISO: A KB2919355 e pre-requisito da KB2999226 no Windows 8.1/Server 2012 R2."
+        }
+    }
+    else {
+        $Pacote = $UcrtWin7x86
+        if ($Sistema64Bits) {
+            $Pacote = $UcrtWin7x64
+        }
     }
 
     if (!(Test-Path $Pacote)) {
@@ -506,14 +552,31 @@ function InstalarAtualizacaoUcrtWindows7 {
         return $false
     }
 
-    LogMsg "Instalando Universal CRT KB2999226 para Windows 7: $Pacote"
+    LogMsg "Instalando Universal CRT KB2999226 para Windows $($VersaoWindows.Major).$($VersaoWindows.Minor): $Pacote"
     RemoverBloqueioArquivo $Pacote
 
     try {
         $Argumentos = '"' + $Pacote + '" /quiet /norestart'
         $Processo = Start-Process -FilePath "wusa.exe" -ArgumentList $Argumentos -Wait -PassThru
         LogMsg "KB2999226 finalizada. ExitCode: $($Processo.ExitCode)"
-        return ($Processo.ExitCode -eq 0 -or $Processo.ExitCode -eq 3010 -or $Processo.ExitCode -eq 2359302)
+        $Sucesso = ($Processo.ExitCode -eq 0 -or $Processo.ExitCode -eq 3010 -or $Processo.ExitCode -eq 2359302)
+        if (!$Sucesso) {
+            return $false
+        }
+
+        Start-Sleep -Seconds 2
+        if (Test-UcrtCompleto) {
+            LogMsg "Universal CRT e API Set de 32 bits confirmados apos a KB2999226."
+            return $true
+        }
+
+        if ($Processo.ExitCode -eq 3010) {
+            LogMsg "ERRO: A KB2999226 solicitou reinicializacao. Reinicie o Windows e execute novamente."
+        }
+        else {
+            LogMsg "ERRO: A KB2999226 foi processada, mas o UCRT de 32 bits continua incompleto."
+        }
+        return $false
     }
     catch {
         LogMsg "ERRO ao instalar a KB2999226: $($_.Exception.Message)"
@@ -1092,14 +1155,16 @@ function InstalarDependenciasFull {
         }
     }
 
-    if ($CompatibilidadeWin7 -eq "true") {
+    if ($EhWindows7 -or $EhWindows81) {
         ExecutarPasso "Universal CRT KB2999226" {
-            if (!(InstalarAtualizacaoUcrtWindows7)) {
+            if (!(InstalarAtualizacaoUcrtLegado)) {
                 LogMsg "ERRO: Falha ao instalar a KB2999226."
                 exit 1
             }
         }
+    }
 
+    if ($CompatibilidadeWin7 -eq "true") {
         ExecutarPasso "Visual C++ Redistributable x86 para Windows 7" {
             if ($VerificarAntesDeBaixar -eq "true" -and (Test-VisualCppInstalado $false)) {
                 LogMsg "Visual C++ x86 para Windows 7 ja instalado. Instalacao ignorada."
