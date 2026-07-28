@@ -773,10 +773,20 @@ function ExtrairArquivoVersaoCompat {
         New-Item -ItemType Directory -Path $Destino -Force | Out-Null
     }
 
+    try {
+        LogMsg "Extraindo pacote autoextraivel via .NET ZipFile para $Destino"
+        ExtrairArquivoVersaoZipDotNet -Pacote $Pacote -Destino $Destino
+        LogMsg "Extracao via .NET ZipFile finalizada com sucesso."
+        return 0
+    }
+    catch {
+        LogMsg "AVISO: Extracao via .NET ZipFile falhou: $($_.Exception.Message)"
+    }
+
     $Tar = Get-Command "tar.exe" -ErrorAction SilentlyContinue
 
     if ($Tar) {
-        LogMsg "Extraindo versao TekFarma com tar para $Destino"
+        LogMsg "Tentando extracao alternativa com tar para $Destino"
         $ProcTar = Start-Process -FilePath $Tar.Source -ArgumentList @("-xf", $Pacote, "-C", $Destino) -Wait -PassThru
         LogMsg "Extracao com tar finalizada. ExitCode: $($ProcTar.ExitCode)"
 
@@ -784,20 +794,10 @@ function ExtrairArquivoVersaoCompat {
             return 0
         }
 
-        LogMsg "AVISO: tar.exe retornou codigo $($ProcTar.ExitCode). Tentando extracao alternativa."
+        LogMsg "AVISO: tar.exe retornou codigo $($ProcTar.ExitCode). Tentando Shell.Application."
     }
     else {
-        LogMsg "AVISO: tar.exe nao encontrado neste Windows. Tentando extracao alternativa via .NET."
-    }
-
-    try {
-        LogMsg "Extraindo versao TekFarma via .NET ZipFile para $Destino"
-        ExtrairArquivoVersaoZipDotNet -Pacote $Pacote -Destino $Destino
-        LogMsg "Extracao via .NET ZipFile finalizada com sucesso."
-        return 0
-    }
-    catch {
-        LogMsg "AVISO: Extracao via .NET ZipFile falhou: $($_.Exception.Message)"
+        LogMsg "AVISO: tar.exe nao encontrado neste Windows. Tentando Shell.Application."
     }
 
     try {
@@ -812,12 +812,70 @@ function ExtrairArquivoVersaoCompat {
     }
 }
 
+function Test-VersaoTekFarmaAplicada {
+    param(
+        [string]$Pacote,
+        [string]$Destino
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+
+    $ArquivoDestino = Join-Path $Destino "TekAplicacao.exe"
+    if (!(Test-Path -LiteralPath $ArquivoDestino -PathType Leaf)) {
+        LogMsg "ERRO: TekAplicacao.exe nao foi encontrado apos a extracao."
+        return $false
+    }
+
+    $ArquivoZip = [System.IO.Compression.ZipFile]::OpenRead($Pacote)
+
+    try {
+        $Entrada = $ArquivoZip.Entries | Where-Object { $_.Name -ieq "TekAplicacao.exe" } | Select-Object -First 1
+        if ($null -eq $Entrada) {
+            LogMsg "ERRO: TekAplicacao.exe nao foi encontrado dentro do pacote."
+            return $false
+        }
+
+        $ShaPacote = [System.Security.Cryptography.SHA256]::Create()
+        $StreamPacote = $Entrada.Open()
+        try {
+            $HashPacote = ([System.BitConverter]::ToString($ShaPacote.ComputeHash($StreamPacote))).Replace("-", "")
+        }
+        finally {
+            $StreamPacote.Dispose()
+            $ShaPacote.Dispose()
+        }
+
+        $ShaDestino = [System.Security.Cryptography.SHA256]::Create()
+        $StreamDestino = [System.IO.File]::OpenRead($ArquivoDestino)
+        try {
+            $HashDestino = ([System.BitConverter]::ToString($ShaDestino.ComputeHash($StreamDestino))).Replace("-", "")
+        }
+        finally {
+            $StreamDestino.Dispose()
+            $ShaDestino.Dispose()
+        }
+
+        if ($HashPacote -ne $HashDestino) {
+            LogMsg "ERRO: O TekAplicacao.exe instalado nao corresponde ao arquivo do pacote."
+            LogMsg "Hash esperado: $HashPacote"
+            LogMsg "Hash instalado: $HashDestino"
+            return $false
+        }
+
+        LogMsg "Validacao concluida: TekAplicacao.exe corresponde ao pacote baixado."
+        return $true
+    }
+    finally {
+        $ArquivoZip.Dispose()
+    }
+}
+
 function AtualizarVersaoTekFarmaServidor {
     if ($TipoVersao -eq "normal") {
-        $Pacote = Join-Path $Base "TekFarma50v109.7.zip"
+        $Pacote = Join-Path $Base "TekFarma50.exe"
     }
     elseif ($TipoVersao -eq "i") {
-        $Pacote = Join-Path $Base "TekFarma50v109.7i.zip"
+        $Pacote = Join-Path $Base "TekFarma50i.exe"
     }
     else {
         LogMsg "AVISO: Tipo de versao invalido: $TipoVersao"
@@ -838,7 +896,11 @@ function AtualizarVersaoTekFarmaServidor {
     $CodigoExtracao = ExtrairArquivoVersaoCompat -Pacote $Pacote -Destino $DestinoSistema
     LogMsg "Extracao da versao finalizada. ExitCode: $CodigoExtracao"
 
-    return ($CodigoExtracao -eq 0)
+    if ($CodigoExtracao -ne 0) {
+        return $false
+    }
+
+    return (Test-VersaoTekFarmaAplicada -Pacote $Pacote -Destino $DestinoSistema)
 }
 
 function ObterInstalacoesFirebird {
