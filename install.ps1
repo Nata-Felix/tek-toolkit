@@ -325,6 +325,22 @@ Write-Host "====================================="
 Write-Host ""
 Write-Host "Preparando interface grafica..."
 
+if ([System.IO.Directory]::Exists($CacheDir)) {
+    Write-Host "Limpando cache anterior: $CacheDir"
+
+    try {
+        [System.IO.Directory]::Delete($CacheDir, $true)
+    }
+    catch {
+        Set-ConsoleVisible -Visible $true
+        Write-Host "ERRO: Nao foi possivel limpar o cache de downloads."
+        Write-Host $_.Exception.Message
+        Start-Sleep -Seconds 5
+        LimparHistoricoPowerShell
+        [Environment]::Exit(1)
+    }
+}
+
 [System.IO.Directory]::CreateDirectory($Destino) | Out-Null
 [System.IO.Directory]::CreateDirectory($CacheDir) | Out-Null
 
