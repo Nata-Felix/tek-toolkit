@@ -15,8 +15,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("TekFarmaInstaller")]
 [assembly: AssemblyProduct("TEK Toolkit")]
 [assembly: AssemblyCompany("SOLPPE")]
-[assembly: AssemblyVersion("1.0.16.0")]
-[assembly: AssemblyFileVersion("1.0.16.0")]
+[assembly: AssemblyVersion("1.0.17.0")]
+[assembly: AssemblyFileVersion("1.0.17.0")]
 
 namespace TekFarmaInstaller
 {
@@ -76,7 +76,7 @@ namespace TekFarmaInstaller
 
         public InstallerForm()
         {
-            Text = "Instalador TekFarma / Crystal - v1.0.16";
+            Text = "Instalador TekFarma / Crystal - v1.0.17";
             Width = 1024;
             Height = 660;
             MinimumSize = new Size(1024, 660);
@@ -189,7 +189,7 @@ namespace TekFarmaInstaller
             optionsPanel.Left = 42;
             optionsPanel.Top = 186;
             optionsPanel.Width = 336;
-            optionsPanel.Height = 318;
+            optionsPanel.Height = 218;
             optionsPanel.BackColor = Color.White;
             optionsPanel.Paint += delegate(object sender, PaintEventArgs e)
             {
@@ -202,15 +202,11 @@ namespace TekFarmaInstaller
 
             AddOption(optionsPanel, InstallMode.Versao, 4, "Somente Versao", "", "box",
                 "Atualiza apenas a versao do TekFarma em C:\\TekSoftware\\TekFarma.");
-            AddOption(optionsPanel, InstallMode.TekSync, 54, "Atualizar TekSync", "1.10.0", "sync",
-                "Atualiza o TekSync 1.10.0 no servidor e altera somente a chave Autenticador do sync.ini.");
-            AddOption(optionsPanel, InstallMode.Crystal, 104, "Somente Crystal", "", "diamond",
+            AddOption(optionsPanel, InstallMode.Crystal, 54, "Somente Crystal", "", "diamond",
                 ".NET 4.8, VS x86/x64, CRRuntime_39 e fix Crystal.");
-            AddOption(optionsPanel, InstallMode.CrystalWin7, 154, "Somente Crystal Win7", "", "diamond",
-                ".NET 4.8, VS x86 para Windows 7, CRRuntime_39 e fix Crystal.");
-            AddOption(optionsPanel, InstallMode.Full, 204, "Completo", "versao + Crystal", "stack",
+            AddOption(optionsPanel, InstallMode.Full, 104, "Completo", "versao + Crystal", "stack",
                 "Atualiza a versao do TekFarma e instala .NET 4.8, VS x86/x64, CRRuntime_39 e fix Crystal.");
-            AddOption(optionsPanel, InstallMode.TekFarma, 254, "Novo Servidor/Terminal", "", "network",
+            AddOption(optionsPanel, InstallMode.TekFarma, 154, "Novo Servidor/Terminal", "", "network",
                 "Servidor: Firebird, pastas, banco, versao e dependencias. Terminal: dependencias, credencial, mapeamento e atalho.");
 
             BuildChoicePanel(root);
@@ -244,7 +240,7 @@ namespace TekFarmaInstaller
         {
             Panel choicePanel = new Panel();
             choicePanel.Left = 42;
-            choicePanel.Top = 510;
+            choicePanel.Top = 410;
             choicePanel.Width = 358;
             choicePanel.Height = 54;
             choicePanel.BackColor = Color.White;
