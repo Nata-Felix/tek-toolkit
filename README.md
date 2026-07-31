@@ -112,7 +112,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\gui\build.ps1
 ## Cuidados de uso
 
 O toolkit executa tarefas administrativas e foi criado para atendimento técnico controlado. Antes de usar, valide permissões, backups e compatibilidade com o ambiente de destino.
-
-## Relação com a SOLPPE
-
-Este projeto representa a aplicação especializada do trabalho desenvolvido sob a marca **SOLPPE — Solução Parceira Para Empresas** para o ecossistema TekFarma.
