@@ -1,0 +1,35 @@
+name: Publish bootstrap scripts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*.ps1"
+      - "*.exe"
+      - "gui/**"
+      - ".github/workflows/publish-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload bootstrap files to v1.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.0 \
+            install.ps1 \
+            install_console.ps1 \
+            instalar.ps1 \
+            instalar_tekfarma.ps1 \
+            suporte.ps1 \
+            suporte_teksoftware.ps1 \
+            TekFarmaInstaller.exe \
+            TekSoftwareSuporte.exe \
+            --clobber

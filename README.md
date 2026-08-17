@@ -46,13 +46,13 @@ gui/build.ps1                  Compilação dos executáveis
 Instalador:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://raw.githubusercontent.com/Nata-Felix/TEK-Toolkit/refs/heads/main/install.ps1 | iex
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://github.com/Nata-Felix/TEK-Toolkit/releases/download/v1.0/install.ps1 | iex
 ```
 
 Central de suporte:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://raw.githubusercontent.com/Nata-Felix/TEK-Toolkit/refs/heads/main/suporte.ps1 | iex
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://github.com/Nata-Felix/TEK-Toolkit/releases/download/v1.0/suporte.ps1 | iex
 ```
 
 ### Redes com conexão HTTPS instável
@@ -62,7 +62,7 @@ abaixo. Ele força TLS 1.2 e tenta baixar o bootstrap até três vezes:
 
 ```powershell
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$uri = "https://raw.githubusercontent.com/Nata-Felix/TEK-Toolkit/refs/heads/main/install.ps1"
+$uri = "https://github.com/Nata-Felix/TEK-Toolkit/releases/download/v1.0/install.ps1"
 $bootstrap = $null
 $ultimoErro = $null
 

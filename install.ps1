@@ -6,7 +6,7 @@ $Version = "v1.0"
 $Repo = "Nata-Felix/TEK-Toolkit"
 
 $BaseUrl = "https://github.com/$Repo/releases/download/$Version"
-$RawUrl = "https://raw.githubusercontent.com/$Repo/refs/heads/main"
+$RawUrl = $BaseUrl
 
 $RunId = "{0}_{1}" -f (Get-Date -Format "yyyyMMddHHmmss"), $PID
 $TempUsuario = [System.IO.Path]::GetTempPath()
@@ -471,7 +471,7 @@ catch {
     Write-Host $_.Exception.Message
     Write-Host ""
     Write-Host "Fallback em modo texto:"
-    Write-Host "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://raw.githubusercontent.com/$Repo/refs/heads/main/install_console.ps1 | iex"
+    Write-Host "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm $BaseUrl/install_console.ps1 | iex"
     Start-Sleep -Seconds 8
     LimparHistoricoPowerShell
     [Environment]::Exit(1)

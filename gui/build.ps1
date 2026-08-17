@@ -18,22 +18,25 @@ function Build-WinFormsExe {
         [string]$ErrorMessage
     )
 
-    & $Csc `
-        /nologo `
-        /target:winexe `
-        /platform:x86 `
-        /optimize+ `
-        /win32icon:"$PSScriptRoot\assets\TekFarmaInstaller.ico" `
-        /win32manifest:"$PSScriptRoot\app.manifest" `
-        /reference:System.dll `
-        /reference:System.Core.dll `
-        /reference:System.Drawing.dll `
-        /reference:System.Web.Extensions.dll `
-        /reference:System.Windows.Forms.dll `
-        /resource:"$PSScriptRoot\assets\logo_display.png",TekFarmaLogo `
-        /resource:"$PSScriptRoot\assets\TekFarmaInstaller.ico",TekFarmaIcon `
-        /out:$OutputFile `
+    $CompilerArguments = @(
+        "/nologo"
+        "/target:winexe"
+        "/platform:x86"
+        "/optimize+"
+        "/win32icon:$PSScriptRoot\assets\TekFarmaInstaller.ico"
+        "/win32manifest:$PSScriptRoot\app.manifest"
+        "/reference:System.dll"
+        "/reference:System.Core.dll"
+        "/reference:System.Drawing.dll"
+        "/reference:System.Web.Extensions.dll"
+        "/reference:System.Windows.Forms.dll"
+        "/resource:$PSScriptRoot\assets\logo_display.png,TekFarmaLogo"
+        "/resource:$PSScriptRoot\assets\TekFarmaInstaller.ico,TekFarmaIcon"
+        "/out:$OutputFile"
         $SourceFile
+    )
+
+    & $Csc $CompilerArguments
 
     if ($LASTEXITCODE -ne 0) {
         throw $ErrorMessage

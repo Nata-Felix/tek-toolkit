@@ -6,7 +6,7 @@ $Version = "v1.0"
 $Repo = "Nata-Felix/TEK-Toolkit"
 
 $BaseUrl = "https://github.com/$Repo/releases/download/$Version"
-$RawUrl = "https://raw.githubusercontent.com/$Repo/refs/heads/main"
+$RawUrl = $BaseUrl
 
 $Destino = Join-Path ([System.IO.Path]::GetTempPath()) "InstalacaoCrystal"
 
