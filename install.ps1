@@ -448,7 +448,7 @@ BaixarArquivo `
     -Nome "TekFarmaInstaller.exe" `
     -CacheArquivo $GuiCache `
     -MaxAgeMinutos 15 `
-    -VersaoMinima "1.0.17.0"
+    -VersaoMinima "1.0.18.0"
 
 Write-Host ""
 Write-Host "Abrindo interface grafica..."

@@ -15,8 +15,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("TekFarmaInstaller")]
 [assembly: AssemblyProduct("TEK Toolkit")]
 [assembly: AssemblyCompany("SOLPPE")]
-[assembly: AssemblyVersion("1.0.17.0")]
-[assembly: AssemblyFileVersion("1.0.17.0")]
+[assembly: AssemblyVersion("1.0.18.0")]
+[assembly: AssemblyFileVersion("1.0.18.0")]
 
 namespace TekFarmaInstaller
 {
@@ -597,8 +597,9 @@ namespace TekFarmaInstaller
                 statusLabel.Text = "Processo concluido";
                 AppendLog("[OK] Processo finalizado.");
 
-                if (plan.Mode == InstallMode.TekFarma &&
-                    String.Equals(plan.PerfilTek, "servidor", StringComparison.OrdinalIgnoreCase))
+                if (plan.Mode == InstallMode.Versao ||
+                    (plan.Mode == InstallMode.TekFarma &&
+                    String.Equals(plan.PerfilTek, "servidor", StringComparison.OrdinalIgnoreCase)))
                 {
                     AppendLog("[INFO] Exibindo aviso final de atualizacao do servidor por 30 segundos.");
 
