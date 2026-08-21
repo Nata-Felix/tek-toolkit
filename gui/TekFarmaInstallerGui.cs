@@ -597,6 +597,20 @@ namespace TekFarmaInstaller
                 statusLabel.Text = "Processo concluido";
                 AppendLog("[OK] Processo finalizado.");
 
+                if (plan.Mode == InstallMode.TekFarma &&
+                    String.Equals(plan.PerfilTek, "servidor", StringComparison.OrdinalIgnoreCase))
+                {
+                    AppendLog("[INFO] Exibindo aviso final de atualizacao do servidor por 30 segundos.");
+
+                    using (ServerUpdateCompletedDialog dialog = new ServerUpdateCompletedDialog())
+                    {
+                        dialog.ShowDialog(this);
+                    }
+
+                    Close();
+                    return;
+                }
+
                 if (closeWhenDoneCheckBox.Checked)
                 {
                     BeginInvoke(new Action(Close));
@@ -1537,6 +1551,89 @@ namespace TekFarmaInstaller
             }
 
             return request;
+        }
+    }
+
+    internal sealed class ServerUpdateCompletedDialog : Form
+    {
+        private const int CloseAfterSeconds = 30;
+        private readonly Label countdownLabel = new Label();
+        private readonly System.Windows.Forms.Timer countdownTimer = new System.Windows.Forms.Timer();
+        private int secondsRemaining = CloseAfterSeconds;
+
+        public ServerUpdateCompletedDialog()
+        {
+            Text = "Atualizacao do servidor concluida";
+            ClientSize = new Size(580, 292);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ShowInTaskbar = false;
+            BackColor = Color.White;
+            Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+            ControlBox = false;
+
+            Label title = new Label();
+            title.Text = "Atualizacao do servidor concluida";
+            title.SetBounds(28, 24, 520, 34);
+            title.Font = new Font("Segoe UI", 16F, FontStyle.Bold, GraphicsUnit.Point);
+            title.ForeColor = Color.FromArgb(0, 49, 112);
+            Controls.Add(title);
+
+            Label message = new Label();
+            message.Text = "Feche e abra novamente o sistema em todos os terminais para carregar a nova versao.\r\n\r\n" +
+                "Se a versao do terminal for inferior a 1.09.5, sera necessario conectar nele para atualizar o Crystal.";
+            message.SetBounds(30, 78, 520, 96);
+            message.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+            message.ForeColor = Color.FromArgb(38, 48, 64);
+            Controls.Add(message);
+
+            Panel separator = new Panel();
+            separator.SetBounds(28, 190, 524, 1);
+            separator.BackColor = Color.FromArgb(205, 214, 224);
+            Controls.Add(separator);
+
+            countdownLabel.SetBounds(30, 210, 360, 24);
+            countdownLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+            countdownLabel.ForeColor = Color.FromArgb(0, 92, 190);
+            Controls.Add(countdownLabel);
+
+            Button closeNowButton = new Button();
+            closeNowButton.Text = "Fechar agora";
+            closeNowButton.SetBounds(418, 220, 132, 38);
+            closeNowButton.FlatStyle = FlatStyle.Flat;
+            closeNowButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
+            closeNowButton.BackColor = Color.FromArgb(0, 104, 210);
+            closeNowButton.ForeColor = Color.White;
+            closeNowButton.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+            closeNowButton.Click += delegate { Close(); };
+            Controls.Add(closeNowButton);
+            AcceptButton = closeNowButton;
+
+            UpdateCountdownText();
+            countdownTimer.Interval = 1000;
+            countdownTimer.Tick += CountdownTimer_Tick;
+            Shown += delegate { countdownTimer.Start(); };
+            FormClosed += delegate { countdownTimer.Stop(); countdownTimer.Dispose(); };
+        }
+
+        private void CountdownTimer_Tick(object sender, EventArgs e)
+        {
+            secondsRemaining--;
+
+            if (secondsRemaining <= 0)
+            {
+                Close();
+                return;
+            }
+
+            UpdateCountdownText();
+        }
+
+        private void UpdateCountdownText()
+        {
+            countdownLabel.Text = "O instalador sera fechado em " + secondsRemaining + " segundos.";
         }
     }
 
