@@ -36,7 +36,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($path in @("suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1", "tests/Test-AdditionalSupportTools.ps1")) {
+          foreach ($path in @("suporte.ps1", "suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1", "tests/Test-AdditionalSupportTools.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(

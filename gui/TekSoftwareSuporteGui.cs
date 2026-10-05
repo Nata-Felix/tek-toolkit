@@ -68,7 +68,6 @@ namespace TekSoftwareSuporte
         private readonly List<CollapsibleSection> actionSections = new List<CollapsibleSection>();
         private CollapsibleSection activeActionSection;
 
-
         private const string AppVersion = "1.1.0";
         private const string LatestReleaseApiUrl = "https://api.github.com/repos/" + Repo + "/releases/tags/" + Version;
         private const string ToolkitAssetName = "TekSoftwareSuporte.exe";
@@ -1503,7 +1502,6 @@ namespace TekSoftwareSuporte
                 try
                 {
                     CleanupOldUpdaterFiles();
-                    CleanupPreviousVersionBackup();
                     UpdateReleaseInfo release = GetLatestToolkitRelease();
 
                     if (release == null || String.Equals(NormalizeSha256(release.ToolkitDigest), ComputeSha256(Application.ExecutablePath), StringComparison.OrdinalIgnoreCase))
@@ -1549,7 +1547,8 @@ namespace TekSoftwareSuporte
                             return;
                         }
 
-                        StartUpdaterAndExit(release, updaterPath);
+                        try { StartUpdaterAndExit(release, updaterPath); }
+                        catch (Exception ex) { SetUpdateCheckStatus("Pronto para executar", "[ATUALIZACAO] " + ex.Message); }
                     });
                 }
                 catch (Exception ex)
@@ -1777,76 +1776,34 @@ namespace TekSoftwareSuporte
             }
         }
 
-        private static bool IsNewerVersion(string releaseTag, string currentVersion)
-        {
-            System.Version release;
-            System.Version current;
-            return TryParseToolkitVersion(releaseTag, out release) && TryParseToolkitVersion(currentVersion, out current) && release > current;
-        }
-
-        private static bool TryParseToolkitVersion(string value, out System.Version version)
-        {
-            version = null;
-            if (String.IsNullOrWhiteSpace(value))
-            {
-                return false;
-            }
-
-            string text = value.Trim();
-            if (text.StartsWith("v", StringComparison.OrdinalIgnoreCase))
-            {
-                text = text.Substring(1);
-            }
-
-            int suffix = text.IndexOfAny(new char[] { '-', '+' });
-            if (suffix >= 0)
-            {
-                text = text.Substring(0, suffix);
-            }
-
-            string[] parts = text.Split('.');
-            if (parts.Length < 1 || parts.Length > 4)
-            {
-                return false;
-            }
-
-            int[] numbers = new int[] { 0, 0, 0, 0 };
-            for (int i = 0; i < parts.Length; i++)
-            {
-                if (!Int32.TryParse(parts[i], out numbers[i]) || numbers[i] < 0)
-                {
-                    return false;
-                }
-            }
-
-            version = new System.Version(numbers[0], numbers[1], numbers[2], numbers[3]);
-            return true;
-        }
-
         private void StartUpdaterAndExit(UpdateReleaseInfo release, string updaterPath)
         {
             string targetPath = Path.GetFullPath(Application.ExecutablePath);
+            string marker = targetPath + ".update-in-progress";
             string arguments = "--pid " + Process.GetCurrentProcess().Id +
                 " --target " + QuoteArgument(targetPath) +
                 " --url " + QuoteArgument(release.ToolkitUrl) +
                 " --version " + QuoteArgument(release.TagName) +
                 " --sha256 " + QuoteArgument(NormalizeSha256(release.ToolkitDigest) ?? "");
-
-            Process updater = Process.Start(new ProcessStartInfo
+            File.WriteAllText(marker, DateTime.UtcNow.ToString("o"));
+            try
             {
-                FileName = updaterPath,
-                Arguments = arguments,
-                WorkingDirectory = Path.GetDirectoryName(targetPath),
-                UseShellExecute = true
-            });
-
-            if (updater == null)
-            {
-                throw new InvalidOperationException("O mini instalador nao iniciou.");
+                Process updater = Process.Start(new ProcessStartInfo
+                {
+                    FileName = updaterPath,
+                    Arguments = arguments,
+                    WorkingDirectory = Path.GetDirectoryName(targetPath),
+                    UseShellExecute = true
+                });
+                if (updater == null) throw new InvalidOperationException("O atualizador nao iniciou.");
             }
-
-            statusLabel.Text = "Instalando atualizacao " + release.TagName + "...";
-            AppendLog("[ATUALIZACAO] Mini instalador iniciado. O toolkit sera reaberto automaticamente.");
+            catch
+            {
+                TryDeleteFile(marker);
+                throw;
+            }
+            statusLabel.Text = "Instalando atualizacao...";
+            AppendLog("[ATUALIZACAO] Atualizador iniciado. O suporte sera reaberto automaticamente.");
             Application.Exit();
         }
 
@@ -1913,22 +1870,6 @@ namespace TekSoftwareSuporte
             }
         }
 
-        private static void CleanupPreviousVersionBackup()
-        {
-            try
-            {
-                string executablePath = Path.GetFullPath(Application.ExecutablePath);
-                string backupPath = executablePath + ".previous";
-                if (File.Exists(backupPath))
-                {
-                    File.Delete(backupPath);
-                }
-            }
-            catch
-            {
-            }
-        }
-
         private static void TryDeleteFile(string path)
         {
             try
@@ -1951,8 +1892,6 @@ namespace TekSoftwareSuporte
             public string UpdaterUrl;
             public string UpdaterDigest;
         }
-
-
 
         private bool ShowNetworkConfigurationDialog()
         {
@@ -2189,7 +2128,744 @@ namespace TekSoftwareSuporte
             command.AppendLine("Write-Output 'TEK_PROGRESS|5|Obtendo a ferramenta oficial da Microsoft|-1|'");
             command.AppendLine("Write-Output 'Localizando a versao atual da Office Deployment Tool no site oficial da Microsoft...'");
             command.AppendLine("$downloadPage = Invoke-WebRequest -UseBasicParsing -Uri " + PowerShellLiteral(OfficeDeploymentToolUrl));
-            command.AppendLine("$odtUrl = @($downloadPage.Links | ForEach-Object { $_.href } | Where-Object { $_ -match '^https://download\\.microsoft\\.com/.+officedeploymenttool_.+\\.exe
+            command.AppendLine("$odtUrl = @($downloadPage.Links | ForEach-Object { $_.href } | Where-Object { $_ -match '^https://download\\.microsoft\\.com/.+officedeploymenttool_.+\\.exe$' }) | Select-Object -First 1");
+            command.AppendLine("if ([string]::IsNullOrWhiteSpace([string]$odtUrl)) { throw 'A Microsoft nao retornou o link da Office Deployment Tool.' }");
+            command.AppendLine("$odtPackage = Join-Path $work 'OfficeDeploymentTool.exe'");
+            command.AppendLine("Write-Output 'TEK_PROGRESS|8|Baixando a Office Deployment Tool|-1|'");
+            command.AppendLine("Write-Output 'Baixando a Office Deployment Tool sem abrir o navegador...'");
+            command.AppendLine("Invoke-WebRequest -UseBasicParsing -Uri $odtUrl -OutFile $odtPackage");
+            command.AppendLine("$signature = Get-AuthenticodeSignature -FilePath $odtPackage");
+            command.AppendLine("if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'A assinatura digital da Office Deployment Tool nao e valida.' }");
+            command.AppendLine("Write-Output 'TEK_PROGRESS|12|Assinatura Microsoft validada|-1|'");
+            command.AppendLine("Write-Output 'Assinatura digital Microsoft validada.'");
+            command.AppendLine("$extractArgs = '/quiet /extract:\"' + $odtDir + '\"'");
+            command.AppendLine("$extract = Start-Process -FilePath $odtPackage -ArgumentList $extractArgs -WindowStyle Hidden -Wait -PassThru");
+            command.AppendLine("if ($extract.ExitCode -ne 0) { throw ('Falha ao extrair a Office Deployment Tool. Codigo: ' + $extract.ExitCode) }");
+            command.AppendLine("$setup = Join-Path $odtDir 'setup.exe'");
+            command.AppendLine("if (!(Test-Path -LiteralPath $setup)) { throw 'setup.exe nao encontrado na Office Deployment Tool.' }");
+            command.AppendLine("Write-Output 'TEK_PROGRESS|15|Preparando os arquivos do Office|-1|'");
+            command.AppendLine("$edition = if ([Environment]::Is64BitOperatingSystem) { '64' } else { '32' }");
+            command.AppendLine("$clickToRun = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration' -ErrorAction SilentlyContinue");
+            command.AppendLine("if ($clickToRun.Platform -match 'x86|32') { $edition = '32' }");
+            command.AppendLine("$productXml = @($productIds | ForEach-Object { '    <Product ID=\"' + $_ + '\">' + [Environment]::NewLine + '      <Language ID=\"' + $language + '\" />' + [Environment]::NewLine + '    </Product>' }) -join [Environment]::NewLine");
+            command.AppendLine("$configuration = '<Configuration>' + [Environment]::NewLine + '  <Add OfficeClientEdition=\"' + $edition + '\" SourcePath=\"' + $officeSource + '\" AllowCdnFallback=\"TRUE\">' + [Environment]::NewLine + $productXml + [Environment]::NewLine + '  </Add>' + [Environment]::NewLine + '  <Display Level=\"None\" AcceptEULA=\"TRUE\" />' + [Environment]::NewLine + '  <Updates Enabled=\"TRUE\" />' + [Environment]::NewLine + '  <Property Name=\"FORCEAPPSHUTDOWN\" Value=\"FALSE\" />' + [Environment]::NewLine + '</Configuration>'");
+            command.AppendLine("$configurationPath = Join-Path $work 'configuration.xml'");
+            command.AppendLine("Set-Content -LiteralPath $configurationPath -Value $configuration -Encoding UTF8");
+            command.AppendLine("$doBaseline = @{}");
+            command.AppendLine("$doAvailable = $null -ne (Get-Command Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue)");
+            command.AppendLine("if ($doAvailable) { Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue | Where-Object { $_.PredefinedCallerApplication -eq 'Microsoft Office Click-to-Run' -and $_.SourceUrl -match '(?i)(officecdn|c2r\\.ts\\.cdn\\.office)' } | ForEach-Object { $doBaseline[$_.FileId] = [long]$_.TotalBytesDownloaded } }");
+            command.AppendLine("$downloadArgs = '/download \"' + $configurationPath + '\"'");
+            command.AppendLine("$download = Start-Process -FilePath $setup -ArgumentList $downloadArgs -WindowStyle Hidden -PassThru");
+            command.AppendLine("$downloadStarted = Get-Date");
+            command.AppendLine("$lastSampleAt = $downloadStarted");
+            command.AppendLine("$lastDownloadedBytes = 0L");
+            command.AppendLine("$smoothedBytesPerSecond = 0.0");
+            command.AppendLine("$displayDownloadPercent = 0");
+            command.AppendLine("while (!$download.HasExited) {");
+            command.AppendLine("  Start-Sleep -Seconds 2");
+            command.AppendLine("  $now = Get-Date");
+            command.AppendLine("  $downloadElapsed = [Math]::Max(1, ($now - $downloadStarted).TotalSeconds)");
+            command.AppendLine("  $knownTotalBytes = 0L; $downloadedBytes = 0L");
+            command.AppendLine("  if ($doAvailable) {");
+            command.AppendLine("    $doItems = @(Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue | Where-Object { $_.PredefinedCallerApplication -eq 'Microsoft Office Click-to-Run' -and $_.SourceUrl -match '(?i)(officecdn|c2r\\.ts\\.cdn\\.office)' })");
+            command.AppendLine("    foreach ($doItem in $doItems) { $baselineBytes = if ($doBaseline.ContainsKey($doItem.FileId)) { [long]$doBaseline[$doItem.FileId] } else { 0L }; $itemSize = [Math]::Max([long]0, ([long]$doItem.FileSize - [Math]::Min([long]$doItem.FileSize, $baselineBytes))); $itemDownloaded = [Math]::Max([long]0, ([long]$doItem.TotalBytesDownloaded - $baselineBytes)); $knownTotalBytes += $itemSize; $downloadedBytes += [Math]::Min($itemSize, $itemDownloaded) }");
+            command.AppendLine("  }");
+            command.AppendLine("  if ($knownTotalBytes -le 0) { $downloadMeasure = Get-ChildItem -LiteralPath $officeSource -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum; $downloadedBytes = if ($null -eq $downloadMeasure.Sum) { 0L } else { [long]$downloadMeasure.Sum } }");
+            command.AppendLine("  $sampleSeconds = [Math]::Max(0.25, ($now - $lastSampleAt).TotalSeconds)");
+            command.AppendLine("  $deltaBytes = [Math]::Max([long]0, ([long]$downloadedBytes - [long]$lastDownloadedBytes))");
+            command.AppendLine("  $instantBytesPerSecond = $deltaBytes / $sampleSeconds");
+            command.AppendLine("  if ($instantBytesPerSecond -gt 0 -and $instantBytesPerSecond -lt 500MB) { $smoothedBytesPerSecond = if ($smoothedBytesPerSecond -le 0) { $instantBytesPerSecond } else { ($smoothedBytesPerSecond * 0.72) + ($instantBytesPerSecond * 0.28) } }");
+            command.AppendLine("  if ($knownTotalBytes -gt 0) { $rawDownloadPercent = [Math]::Min(99, [Math]::Round(($downloadedBytes * 100.0) / $knownTotalBytes)); $displayDownloadPercent = [Math]::Max($displayDownloadPercent, $rawDownloadPercent) }");
+            command.AppendLine("  $localPercent = if ($knownTotalBytes -gt 0) { 15 + [int][Math]::Round($displayDownloadPercent * 0.65) } else { [Math]::Min(24, 15 + [int][Math]::Floor($downloadElapsed / 30)) }");
+            command.AppendLine("  $downloadEta = if ($knownTotalBytes -ge 500MB -and $knownTotalBytes -gt $downloadedBytes -and $smoothedBytesPerSecond -gt 0.1MB -and $downloadElapsed -ge 15) { [int][Math]::Ceiling(($knownTotalBytes - $downloadedBytes) / $smoothedBytesPerSecond) } else { -1 }");
+            command.AppendLine("  $downloadMessage = if ($knownTotalBytes -gt 0) { 'Download do Office - {0:N0} / {1:N0} MB' -f ($downloadedBytes / 1MB), ($knownTotalBytes / 1MB) } else { 'Identificando arquivos do Office - {0:N0} MB' -f ($downloadedBytes / 1MB) }");
+            command.AppendLine("  $speedText = if ($smoothedBytesPerSecond -gt 0.1MB) { '{0:N1} MB/s' -f ($smoothedBytesPerSecond / 1MB) } else { 'medindo velocidade' }");
+            command.AppendLine("  Write-Output ('TEK_PROGRESS|' + $localPercent + '|' + $downloadMessage + '|' + $downloadEta + '|' + $speedText)");
+            command.AppendLine("  $lastDownloadedBytes = $downloadedBytes; $lastSampleAt = $now");
+            command.AppendLine("}");
+            command.AppendLine("$download.WaitForExit()");
+            command.AppendLine("if ($download.ExitCode -ne 0) { throw ('Falha ao baixar os arquivos do Office. Codigo: ' + $download.ExitCode) }");
+            command.AppendLine("Write-Output ('TEK_PROGRESS|80|Download do Office concluido|' + $estimatedInstallSeconds + '|preparando instalacao')");
+            command.AppendLine("Write-Output ('Iniciando instalacao silenciosa do Office ' + $edition + ' bits.')");
+            command.AppendLine("$installArgs = '/configure \"' + $configurationPath + '\"'");
+            command.AppendLine("$install = Start-Process -FilePath $setup -ArgumentList $installArgs -WindowStyle Hidden -PassThru");
+            command.AppendLine("$installStarted = Get-Date");
+            command.AppendLine("while (!$install.HasExited) {");
+            command.AppendLine("  Start-Sleep -Seconds 5");
+            command.AppendLine("  $installElapsed = [int][Math]::Floor(((Get-Date) - $installStarted).TotalSeconds)");
+            command.AppendLine("  $installFraction = [Math]::Min(0.96, $installElapsed / [double]$estimatedInstallSeconds)");
+            command.AppendLine("  $localPercent = 80 + [int][Math]::Floor($installFraction * 19)");
+            command.AppendLine("  $installEta = [Math]::Max(0, $estimatedInstallSeconds - $installElapsed)");
+            command.AppendLine("  $installMessage = if ($installElapsed -gt $estimatedInstallSeconds) { 'Finalizando a instalacao do Office' } else { 'Instalando o Office em segundo plano' }");
+            command.AppendLine("  Write-Output ('TEK_PROGRESS|' + $localPercent + '|' + $installMessage + '|' + $installEta + '|fase de instalacao')");
+            command.AppendLine("}");
+            command.AppendLine("$install.WaitForExit()");
+            command.AppendLine("if ($install.ExitCode -ne 0) { throw ('A Office Deployment Tool terminou com o codigo ' + $install.ExitCode + '.') }");
+            command.AppendLine("$cleanupPath = [string]$work");
+            command.AppendLine("$tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\\') + '\\'");
+            command.AppendLine("$cleanupPath = [IO.Path]::GetFullPath($cleanupPath)");
+            command.AppendLine("if (!$cleanupPath.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($cleanupPath) -notlike 'TEK_Office_*') { throw 'Pasta temporaria do Office invalida.' }");
+            command.AppendLine("try { if ([IO.Directory]::Exists($cleanupPath)) { [IO.Directory]::Delete($cleanupPath, $true) } } catch { Write-Output ('AVISO: a pasta temporaria podera ser removida depois: ' + $cleanupPath) }");
+            command.AppendLine("Write-Output 'TEK_PROGRESS|100|Office instalado com sucesso|0|concluido'");
+            command.AppendLine("Write-Output 'Office baixado e instalado com sucesso.'");
+            return command.ToString();
+        }
+
+        private void OpenElevatedPowerShell(string command, string label)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo();
+                psi.FileName = "powershell.exe";
+                psi.Arguments = "-NoExit -NoProfile -ExecutionPolicy Bypass -Command " + QuoteArgument(command);
+                psi.Verb = "runas";
+                psi.UseShellExecute = true;
+                Process.Start(psi);
+                AppendLog("[OK] PowerShell aberto como administrador: " + label);
+            }
+            catch (Win32Exception ex)
+            {
+                AppendLog("[AVISO] A elevacao foi cancelada ou nao foi autorizada: " + ex.Message);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[AVISO] Nao foi possivel abrir o PowerShell: " + ex.Message);
+            }
+        }
+
+        private void OpenShellTarget(string target, string label)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo();
+                psi.FileName = target;
+                psi.UseShellExecute = true;
+                Process.Start(psi);
+                AppendLog("[OK] Aberto: " + label);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("[AVISO] Nao foi possivel abrir " + label + ": " + ex.Message);
+            }
+        }
+
+        private void OpenDownloadedApplication(string fileName, string label, BackgroundWorker bg)
+        {
+            string path = Path.Combine(tempDir, fileName);
+            if (!File.Exists(path))
+            {
+                throw new FileNotFoundException("Arquivo baixado nao encontrado.", path);
+            }
+
+            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Abrindo " + label + "...");
+            AppendLog("[INFO] Abrindo " + label + ": " + path);
+
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = path;
+            psi.WorkingDirectory = Path.GetDirectoryName(path);
+            psi.UseShellExecute = true;
+            Process.Start(psi);
+            AppendLog("[OK] " + label + " iniciado.");
+        }
+
+        private void InstallAndOpenTeamViewer(BackgroundWorker bg)
+        {
+            string installerPath = Path.Combine(tempDir, "TeamViewer_Setup.exe");
+            if (!File.Exists(installerPath))
+            {
+                throw new FileNotFoundException("Instalador do TeamViewer nao encontrado.", installerPath);
+            }
+
+            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Instale o TeamViewer na janela aberta...");
+            AppendLog("[INFO] Abrindo instalador oficial do TeamViewer.");
+            AppendLog("[INFO] Conclua a instalacao padrao e aceite os termos apresentados pelo fornecedor.");
+
+            ProcessStartInfo installerInfo = new ProcessStartInfo();
+            installerInfo.FileName = installerPath;
+            installerInfo.WorkingDirectory = Path.GetDirectoryName(installerPath);
+            installerInfo.UseShellExecute = true;
+
+            using (Process installer = Process.Start(installerInfo))
+            {
+                runningProcess = installer;
+                while (installer != null && !installer.HasExited)
+                {
+                    if (cancelRequested)
+                    {
+                        KillRunningProcessTree();
+                        return;
+                    }
+
+                    Thread.Sleep(300);
+                }
+
+                if (installer != null)
+                {
+                    AppendLog("[INFO] Instalador do TeamViewer finalizado. ExitCode: " + installer.ExitCode);
+                    if (installer.ExitCode != 0)
+                    {
+                        throw new InvalidOperationException("A instalacao do TeamViewer terminou com ExitCode " + installer.ExitCode + ".");
+                    }
+                }
+            }
+
+            runningProcess = null;
+            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Localizando TeamViewer instalado...");
+
+            string teamViewerPath = "";
+            for (int attempt = 0; attempt < 40 && !cancelRequested; attempt++)
+            {
+                teamViewerPath = FindTeamViewerExecutable();
+                if (!String.IsNullOrWhiteSpace(teamViewerPath))
+                {
+                    break;
+                }
+
+                Thread.Sleep(500);
+            }
+
+            if (cancelRequested)
+            {
+                return;
+            }
+
+            if (String.IsNullOrWhiteSpace(teamViewerPath))
+            {
+                throw new FileNotFoundException("A instalacao terminou, mas o executavel do TeamViewer nao foi localizado.");
+            }
+
+            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Abrindo TeamViewer...");
+            AppendLog("[INFO] Abrindo TeamViewer: " + teamViewerPath);
+
+            ProcessStartInfo teamViewerInfo = new ProcessStartInfo();
+            teamViewerInfo.FileName = teamViewerPath;
+            teamViewerInfo.WorkingDirectory = Path.GetDirectoryName(teamViewerPath);
+            teamViewerInfo.UseShellExecute = true;
+            Process.Start(teamViewerInfo);
+            AppendLog("[OK] TeamViewer aberto para exibir os dados de acesso.");
+        }
+
+        private string FindTeamViewerExecutable()
+        {
+            List<string> candidates = new List<string>();
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+            if (!String.IsNullOrWhiteSpace(programFiles))
+            {
+                candidates.Add(Path.Combine(programFiles, "TeamViewer", "TeamViewer.exe"));
+            }
+
+            if (!String.IsNullOrWhiteSpace(programFilesX86))
+            {
+                candidates.Add(Path.Combine(programFilesX86, "TeamViewer", "TeamViewer.exe"));
+            }
+
+            if (!String.IsNullOrWhiteSpace(localAppData))
+            {
+                candidates.Add(Path.Combine(localAppData, "TeamViewer", "TeamViewer.exe"));
+            }
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (File.Exists(candidates[i]))
+                {
+                    return candidates[i];
+                }
+            }
+
+            return "";
+        }
+
+        private void ApplyNetworkConfiguration(NetworkConfigurationPlan plan, BackgroundWorker bg)
+        {
+            RunLocalPowerShellAction("Aplicando configuracao e reparo de rede...", BuildNetworkConfigurationScript(plan), bg);
+        }
+
+        private string BuildNetworkConfigurationScript(NetworkConfigurationPlan plan)
+        {
+            StringBuilder command = new StringBuilder();
+            command.AppendLine("$ErrorActionPreference = 'Stop'");
+            command.AppendLine("$ifIndex = " + plan.InterfaceIndex);
+            command.AppendLine("$alias = " + PowerShellLiteral(plan.InterfaceAlias));
+            command.AppendLine("Write-Output ('Adaptador selecionado: ' + $alias + ' (indice ' + $ifIndex + ')')");
+
+            if (plan.ApplyIpSettings)
+            {
+                if (plan.UseDhcp)
+                {
+                    command.AppendLine("Write-Output 'Restaurando IPv4 automatico por DHCP...'");
+                    command.AppendLine("Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.PrefixOrigin -eq 'Manual' } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue");
+                    command.AppendLine("Get-NetRoute -InterfaceIndex $ifIndex -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue");
+                    command.AppendLine("Set-NetIPInterface -InterfaceIndex $ifIndex -AddressFamily IPv4 -Dhcp Enabled -ErrorAction Stop");
+                    command.AppendLine("Write-Output 'DHCP habilitado.'");
+                }
+                else
+                {
+                    command.AppendLine("Write-Output 'Aplicando endereco IPv4 estatico...'");
+                    command.AppendLine("$targetIp = " + PowerShellLiteral(plan.IpAddress));
+                    command.AppendLine("$currentOnSelected = Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $targetIp } | Select-Object -First 1");
+                    command.AppendLine("if (!$currentOnSelected) {");
+                    command.AppendLine("    Write-Output ('Verificando se o IPv4 ' + $targetIp + ' ja esta em uso...')");
+                    command.AppendLine("    $localOnOtherAdapter = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $targetIp -and $_.InterfaceIndex -ne $ifIndex } | Select-Object -First 1");
+                    command.AppendLine("    $pingInUse = Test-Connection -ComputerName $targetIp -Count 1 -Quiet -ErrorAction SilentlyContinue");
+                    command.AppendLine("    Start-Sleep -Milliseconds 200");
+                    command.AppendLine("    $neighborInUse = Get-NetNeighbor -InterfaceIndex $ifIndex -IPAddress $targetIp -ErrorAction SilentlyContinue | Where-Object { $_.State -notin @('Unreachable','Incomplete') -and ![string]::IsNullOrWhiteSpace([string]$_.LinkLayerAddress) -and $_.LinkLayerAddress -ne '00-00-00-00-00-00' } | Select-Object -First 1");
+                    command.AppendLine("    if ($localOnOtherAdapter -or $pingInUse -or $neighborInUse) { throw ('O IPv4 ' + $targetIp + ' ja esta em uso. Nenhuma configuracao foi alterada. Escolha outro endereco.') }");
+                    command.AppendLine("    Write-Output 'Nenhuma resposta por Ping ou ARP. Prosseguindo com o IPv4 informado.'");
+                    command.AppendLine("} else { Write-Output 'O IPv4 informado ja pertence ao adaptador selecionado.' }");
+                    command.AppendLine("Set-NetIPInterface -InterfaceIndex $ifIndex -AddressFamily IPv4 -Dhcp Disabled -ErrorAction Stop");
+                    command.AppendLine("Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue");
+                    command.AppendLine("Get-NetRoute -InterfaceIndex $ifIndex -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue");
+                    string newIp = "New-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -IPAddress " + PowerShellLiteral(plan.IpAddress) + " -PrefixLength " + plan.PrefixLength;
+                    if (!String.IsNullOrWhiteSpace(plan.Gateway))
+                    {
+                        newIp += " -DefaultGateway " + PowerShellLiteral(plan.Gateway);
+                    }
+                    command.AppendLine(newIp + " -ErrorAction Stop | Out-Null");
+                    command.AppendLine("Write-Output 'IPv4 estatico aplicado.'");
+                }
+            }
+
+            if (plan.ApplyDnsSettings)
+            {
+                if (plan.UseAutomaticDns)
+                {
+                    command.AppendLine("Write-Output 'Restaurando DNS automatico do adaptador...'");
+                    command.AppendLine("Set-DnsClientServerAddress -InterfaceIndex $ifIndex -ResetServerAddresses -ErrorAction Stop");
+                }
+                else
+                {
+                    List<string> dnsServers = new List<string>();
+                    dnsServers.Add(plan.PrimaryDns);
+                    if (!String.IsNullOrWhiteSpace(plan.SecondaryDns)) dnsServers.Add(plan.SecondaryDns);
+                    command.AppendLine("$dnsServers = " + BuildPowerShellArray(dnsServers));
+                    command.AppendLine("Set-DnsClientServerAddress -InterfaceIndex $ifIndex -ServerAddresses $dnsServers -Validate -ErrorAction Stop");
+                    command.AppendLine("Write-Output ('DNS manual aplicado: ' + ($dnsServers -join ', '))");
+                }
+            }
+
+            if (plan.FlushAndRenewDns)
+            {
+                command.AppendLine("Write-Output 'Limpando e registrando o cache DNS...'");
+                command.AppendLine("& ipconfig.exe /flushdns");
+                command.AppendLine("& ipconfig.exe /registerdns");
+                if (plan.UseDhcp)
+                {
+                    command.AppendLine("Write-Output 'Renovando concessao DHCP do adaptador selecionado...'");
+                    command.AppendLine("& ipconfig.exe /release $alias");
+                    command.AppendLine("& ipconfig.exe /renew $alias");
+                }
+            }
+
+            if (plan.ResetWinHttpProxy)
+            {
+                command.AppendLine("Write-Output 'Restaurando proxy WinHTTP...'");
+                command.AppendLine("& netsh.exe winhttp reset proxy");
+            }
+
+            if (plan.EnableTls12)
+            {
+                command.AppendLine("Write-Output 'Restaurando configuracoes seguras de TLS 1.2...'");
+                command.AppendLine("function Set-ToolkitDword([string]$Path,[string]$Name,[int]$Value) { if (!(Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }; New-ItemProperty -Path $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null }");
+                command.AppendLine("foreach ($role in @('Client','Server')) { $path = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.2\\' + $role; Set-ToolkitDword $path 'Enabled' 1; Set-ToolkitDword $path 'DisabledByDefault' 0 }");
+                command.AppendLine("foreach ($path in @('HKLM:\\SOFTWARE\\Microsoft\\.NETFramework\\v4.0.30319','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\.NETFramework\\v4.0.30319')) { Set-ToolkitDword $path 'SchUseStrongCrypto' 1; Set-ToolkitDword $path 'SystemDefaultTlsVersions' 1 }");
+                command.AppendLine("foreach ($path in @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\WinHttp','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\WinHttp')) { $current = (Get-ItemProperty -Path $path -Name 'DefaultSecureProtocols' -ErrorAction SilentlyContinue).DefaultSecureProtocols; if ($null -eq $current) { $current = 0 }; Set-ToolkitDword $path 'DefaultSecureProtocols' ([int]$current -bor 0x800) }");
+                command.AppendLine("$internetPath = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'; $secure = (Get-ItemProperty -Path $internetPath -Name 'SecureProtocols' -ErrorAction SilentlyContinue).SecureProtocols; if ($null -eq $secure) { $secure = 0 }; Set-ToolkitDword $internetPath 'SecureProtocols' ([int]$secure -bor 0x800)");
+                command.AppendLine("Write-Output 'TLS 1.2 habilitado para SChannel, .NET, WinHTTP e Internet Settings.'");
+            }
+
+            if (plan.ResetWinsockAndTcpIp)
+            {
+                command.AppendLine("Write-Output 'Resetando Winsock e pilha TCP/IP do Windows...'");
+                command.AppendLine("& netsh.exe winsock reset");
+                command.AppendLine("& netsh.exe int ip reset");
+                command.AppendLine("Write-Output '[AVISO] Reinicie o Windows para concluir o reset de Winsock/TCP-IP.'");
+            }
+
+            if (plan.TestConnectivity)
+            {
+                command.AppendLine("Write-Output 'Estado IPv4 atual:'");
+                command.AppendLine("Get-NetIPConfiguration -InterfaceIndex $ifIndex | Format-List InterfaceAlias,IPv4Address,IPv4DefaultGateway,DNSServer | Out-String | Write-Output");
+                command.AppendLine("try { [System.Net.Dns]::GetHostAddresses('www.microsoft.com') | Out-Null; Write-Output '[OK] Resolucao DNS funcionando.' } catch { Write-Output ('[AVISO] Falha no teste DNS: ' + $_.Exception.Message) }");
+                command.AppendLine("try { $https = Test-NetConnection -ComputerName 'www.microsoft.com' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue; if ($https) { Write-Output '[OK] Conexao HTTPS/TLS na porta 443 funcionando.' } else { Write-Output '[AVISO] Nao foi possivel conectar na porta 443.' } } catch { Write-Output ('[AVISO] Falha no teste HTTPS: ' + $_.Exception.Message) }");
+            }
+
+            if (plan.OpenInternetAdvancedOptions)
+            {
+                command.AppendLine("Write-Output 'Abrindo Propriedades da Internet na guia Avancadas...'");
+                command.AppendLine("Start-Process -FilePath 'control.exe' -ArgumentList 'inetcpl.cpl,,6'");
+                command.AppendLine("Write-Output '[INFO] Na guia Avancadas, use Restaurar configuracoes avancadas para confirmar a restauracao.'");
+            }
+
+            command.AppendLine("Write-Output 'Configuracao e reparo de rede finalizados.'");
+            return command.ToString();
+        }
+
+        private string PowerShellLiteral(string value)
+        {
+            return "'" + (value ?? "").Replace("'", "''") + "'";
+        }
+
+        private void RemoveSelectedPrintersAndDrivers(WorkPlan plan, BackgroundWorker bg)
+        {
+            RunLocalPowerShellAction("Removendo impressoras e drivers...", BuildPrinterRemovalScript(plan), bg);
+        }
+
+        private string BuildPrinterRemovalScript(WorkPlan plan)
+        {
+            StringBuilder command = new StringBuilder();
+            command.AppendLine("$ErrorActionPreference = 'Continue'");
+            command.AppendLine("$printers = " + BuildPowerShellArray(plan.PrintersToRemove));
+            command.AppendLine("$drivers = " + BuildPowerShellArray(plan.PrinterDriversToRemove));
+            command.AppendLine("function Test-ToolkitServiceStatus([string]$Name,[string]$Expected,[int]$TimeoutSeconds) {");
+            command.AppendLine("  $limit = (Get-Date).AddSeconds($TimeoutSeconds)");
+            command.AppendLine("  do {");
+            command.AppendLine("    $service = Get-Service -Name $Name -ErrorAction SilentlyContinue");
+            command.AppendLine("    if ($null -eq $service) { return $false }");
+            command.AppendLine("    if ([string]$service.Status -ieq $Expected) { return $true }");
+            command.AppendLine("    Start-Sleep -Milliseconds 250");
+            command.AppendLine("  } while ((Get-Date) -lt $limit)");
+            command.AppendLine("  return $false");
+            command.AppendLine("}");
+            command.AppendLine("function Invoke-ToolkitProcessWithTimeout([string]$File,[string]$Arguments,[int]$TimeoutSeconds) {");
+            command.AppendLine("  $psi = New-Object System.Diagnostics.ProcessStartInfo");
+            command.AppendLine("  $psi.FileName = $File; $psi.Arguments = $Arguments; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true");
+            command.AppendLine("  $process = New-Object System.Diagnostics.Process; $process.StartInfo = $psi");
+            command.AppendLine("  try {");
+            command.AppendLine("    [void]$process.Start()");
+            command.AppendLine("    if (!$process.WaitForExit($TimeoutSeconds * 1000)) {");
+            command.AppendLine("      try { $process.Kill(); [void]$process.WaitForExit(2000) } catch { }");
+            command.AppendLine("      return [pscustomobject]@{ ExitCode = 124; TimedOut = $true }");
+            command.AppendLine("    }");
+            command.AppendLine("    return [pscustomobject]@{ ExitCode = $process.ExitCode; TimedOut = $false }");
+            command.AppendLine("  } catch {");
+            command.AppendLine("    [Console]::Out.WriteLine('[AVISO] Falha ao executar ' + $File + ': ' + $_.Exception.Message)");
+            command.AppendLine("    return [pscustomobject]@{ ExitCode = 1; TimedOut = $false }");
+            command.AppendLine("  } finally { if ($process) { $process.Dispose() } }");
+            command.AppendLine("}");
+            command.AppendLine("function Stop-ToolkitSpooler {");
+            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Stopped' 0) { [Console]::Out.WriteLine('Spooler ja estava parado.'); return $true }");
+            command.AppendLine("  [Console]::Out.WriteLine('Parando spooler (limite de 10 segundos)...')");
+            command.AppendLine("  $result = Invoke-ToolkitProcessWithTimeout 'sc.exe' 'stop Spooler' 10");
+            command.AppendLine("  if ($result.TimedOut) { [Console]::Out.WriteLine('[AVISO] Parada normal do spooler excedeu o limite.') }");
+            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Stopped' 5) { [Console]::Out.WriteLine('Spooler parado.'); return $true }");
+            command.AppendLine("  [Console]::Out.WriteLine('[AVISO] Tentando encerramento forcado do spooler...')");
+            command.AppendLine("  $forced = Invoke-ToolkitProcessWithTimeout 'taskkill.exe' '/F /FI \"SERVICES eq Spooler\"' 8");
+            command.AppendLine("  if ($forced.TimedOut) { [Console]::Out.WriteLine('[AVISO] Parada forcada do spooler excedeu o limite.') }");
+            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Stopped' 5) { [Console]::Out.WriteLine('Spooler parado apos tentativa forcada.'); return $true }");
+            command.AppendLine("  [Console]::Out.WriteLine('[AVISO] Nao foi possivel parar o spooler; o fluxo continuara.')");
+            command.AppendLine("  return $false");
+            command.AppendLine("}");
+            command.AppendLine("function Start-ToolkitSpooler {");
+            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Running' 0) { [Console]::Out.WriteLine('Spooler ja esta em execucao.'); return $true }");
+            command.AppendLine("  [Console]::Out.WriteLine('Iniciando spooler (limite de 10 segundos)...')");
+            command.AppendLine("  $result = Invoke-ToolkitProcessWithTimeout 'sc.exe' 'start Spooler' 10");
+            command.AppendLine("  if ($result.TimedOut) { [Console]::Out.WriteLine('[AVISO] Inicio do spooler excedeu o limite.') }");
+            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Running' 8) { [Console]::Out.WriteLine('Spooler iniciado.'); return $true }");
+            command.AppendLine("  [Console]::Out.WriteLine('[AVISO] Nao foi possivel iniciar o spooler; o fluxo continuara.')");
+            command.AppendLine("  return $false");
+            command.AppendLine("}");
+            command.AppendLine("function Reset-ToolkitSpooler {");
+            command.AppendLine("  $stopped = Stop-ToolkitSpooler");
+            command.AppendLine("  if ($stopped) {");
+            command.AppendLine("    $queue = Join-Path $env:SystemRoot 'System32\\spool\\PRINTERS\\*'");
+            command.AppendLine("    Remove-Item -Path $queue -Force -ErrorAction SilentlyContinue");
+            command.AppendLine("  } else { [Console]::Out.WriteLine('[AVISO] Limpeza da fila ignorada porque o spooler nao parou.') }");
+            command.AppendLine("  $started = Start-ToolkitSpooler");
+            command.AppendLine("  if (!$stopped -or !$started) { [Console]::Out.WriteLine('[AVISO] Reset do spooler concluido parcialmente.') }");
+            command.AppendLine("}");
+            command.AppendLine("foreach ($name in $printers) {");
+            command.AppendLine("  try {");
+            command.AppendLine("    if (Get-Printer -Name $name -ErrorAction SilentlyContinue) {");
+            command.AppendLine("      Write-Output ('Removendo impressora: ' + $name)");
+            command.AppendLine("      Remove-Printer -Name $name -ErrorAction Stop");
+            command.AppendLine("      Write-Output ('Impressora removida: ' + $name)");
+            command.AppendLine("    } else { Write-Output ('[AVISO] Impressora nao encontrada: ' + $name) }");
+            command.AppendLine("  } catch { Write-Output ('[AVISO] Falha ao remover impressora ' + $name + ': ' + $_.Exception.Message) }");
+            command.AppendLine("}");
+            command.AppendLine("if ($printers.Count -gt 0) { Reset-ToolkitSpooler }");
+            command.AppendLine("foreach ($name in $drivers) {");
+            command.AppendLine("  try {");
+            command.AppendLine("    if (Get-PrinterDriver -Name $name -ErrorAction SilentlyContinue) {");
+            command.AppendLine("      Write-Output ('Removendo driver: ' + $name)");
+            command.AppendLine("      Remove-PrinterDriver -Name $name -ErrorAction Stop");
+            command.AppendLine("      Write-Output ('Driver removido: ' + $name)");
+            command.AppendLine("    } else { Write-Output ('[AVISO] Driver nao encontrado: ' + $name) }");
+            command.AppendLine("  } catch {");
+            command.AppendLine("    Write-Output ('[AVISO] Primeira tentativa falhou para ' + $name + ': ' + $_.Exception.Message)");
+            command.AppendLine("    Reset-ToolkitSpooler");
+            command.AppendLine("    try {");
+            command.AppendLine("      Remove-PrinterDriver -Name $name -ErrorAction Stop");
+            command.AppendLine("      Write-Output ('Driver removido apos reset do spooler: ' + $name)");
+            command.AppendLine("    } catch { Write-Output ('[AVISO] Nao foi possivel remover driver ' + $name + ': ' + $_.Exception.Message) }");
+            command.AppendLine("  }");
+            command.AppendLine("}");
+            command.AppendLine("Write-Output 'Remocao de impressoras e drivers finalizada.'");
+            return command.ToString();
+        }
+
+        private void InstallMicrosoftPrintToPdf(BackgroundWorker bg)
+        {
+            RunLocalPowerShellAction("Instalando impressora PDF...", BuildPrintToPdfScript(), bg);
+        }
+
+        private string BuildPrintToPdfScript()
+        {
+            StringBuilder command = new StringBuilder();
+            command.AppendLine("$ErrorActionPreference = 'Stop'");
+            command.AppendLine("$featureName = 'Printing-PrintToPDFServices-Features'");
+            command.AppendLine("$feature = Get-WindowsOptionalFeature -Online -FeatureName $featureName");
+            command.AppendLine("if ($feature.State -ne 'Enabled') {");
+            command.AppendLine("  Write-Output 'Ativando recurso Microsoft Print to PDF...'");
+            command.AppendLine("  $result = Enable-WindowsOptionalFeature -Online -FeatureName $featureName -All -NoRestart");
+            command.AppendLine("  if ($result.RestartNeeded) { Write-Output '[AVISO] O Windows solicitou reinicio para concluir o recurso.' }");
+            command.AppendLine("  Start-Sleep -Seconds 2");
+            command.AppendLine("}");
+            command.AppendLine("$printer = Get-Printer -Name 'Microsoft Print to PDF' -ErrorAction SilentlyContinue");
+            command.AppendLine("if (!$printer) {");
+            command.AppendLine("  $driver = Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)Microsoft.*Print.*PDF' } | Select-Object -First 1");
+            command.AppendLine("  if (!$driver) {");
+            command.AppendLine("    Add-PrinterDriver -Name 'Microsoft Print To PDF' -ErrorAction Stop");
+            command.AppendLine("    $driver = Get-PrinterDriver -Name 'Microsoft Print To PDF' -ErrorAction Stop");
+            command.AppendLine("  }");
+            command.AppendLine("  Add-Printer -Name 'Microsoft Print to PDF' -DriverName $driver.Name -PortName 'PORTPROMPT:' -ErrorAction Stop");
+            command.AppendLine("  Write-Output 'Microsoft Print to PDF instalada.'");
+            command.AppendLine("} else { Write-Output 'Microsoft Print to PDF ja esta instalada.' }");
+            return command.ToString();
+        }
+
+        private void InsertPrinterRegistryEntries(BackgroundWorker bg)
+        {
+            RunLocalPowerShellAction("Inserindo correcoes no registro...", BuildPrinterRegistryScript(), bg);
+        }
+
+        private string BuildPrinterRegistryScript()
+        {
+            StringBuilder command = new StringBuilder();
+            command.AppendLine("$ErrorActionPreference = 'Stop'");
+            command.AppendLine("function Set-ToolkitPrinterDword([string]$Path,[string]$Name,[int]$Value) {");
+            command.AppendLine("  if (!(Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }");
+            command.AppendLine("  New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null");
+            command.AppendLine("  $actual = (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name");
+            command.AppendLine("  if ([int]$actual -ne $Value) { throw ('Falha ao validar ' + $Path + '\\' + $Name) }");
+            command.AppendLine("  Write-Output ('[OK] Registro aplicado: ' + $Path + '\\' + $Name + '=' + $Value)");
+            command.AppendLine("}");
+            command.AppendLine("$printPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print'");
+            command.AppendLine("Set-ToolkitPrinterDword $printPath 'RpcAuthnLevelPrivacyEnabled' 0");
+            command.AppendLine("$overridePath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Policies\\Microsoft\\FeatureManagement\\Overrides'");
+            command.AppendLine("foreach ($name in @('713073804','3598754956','1921033356')) { Set-ToolkitPrinterDword $overridePath $name 0 }");
+            command.AppendLine("Write-Output 'Correcoes de registro para impressoras inseridas e validadas com sucesso.'");
+            command.AppendLine("Write-Output '[INFO] Reinicie o Windows para garantir que todas as alteracoes sejam aplicadas.'");
+            return command.ToString();
+        }
+
+        private void RunLocalPowerShellAction(string progressText, string command, BackgroundWorker bg)
+        {
+            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), progressText);
+            string wrappedCommand =
+                "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\r\n" +
+                "$OutputEncoding = [Console]::OutputEncoding\r\n" +
+                "$ProgressPreference = 'SilentlyContinue'\r\n" +
+                "try {\r\n& {\r\n" + command + "\r\n}\r\n" +
+                "} catch {\r\n" +
+                "  [Console]::Out.WriteLine(('TEK_ERROR|' + $_.Exception.Message))\r\n" +
+                "  exit 1\r\n" +
+                "}\r\n";
+            string encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(wrappedCommand));
+
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = "powershell.exe";
+            psi.Arguments = "-NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand " + encodedCommand;
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.StandardOutputEncoding = Encoding.UTF8;
+            psi.StandardErrorEncoding = Encoding.UTF8;
+            psi.CreateNoWindow = true;
+            psi.WorkingDirectory = String.IsNullOrWhiteSpace(tempDir) ? Path.GetTempPath() : tempDir;
+
+            using (Process process = new Process())
+            {
+                process.StartInfo = psi;
+                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (!String.IsNullOrWhiteSpace(e.Data))
+                    {
+                        if (e.Data.StartsWith("TEK_ERROR|", StringComparison.Ordinal))
+                        {
+                            AppendLog("[ERRO] " + e.Data.Substring("TEK_ERROR|".Length));
+                            return;
+                        }
+
+                        int localPercent;
+                        ExecutionProgressInfo progressInfo;
+                        if (TryParseExecutionProgress(e.Data, out localPercent, out progressInfo))
+                        {
+                            int overallPercent = CalcUnitProgress(localPercent);
+                            bg.ReportProgress(overallPercent, progressInfo);
+                        }
+                        else
+                        {
+                            AppendLog(e.Data);
+                        }
+                    }
+                };
+                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                {
+                    string errorText = NormalizePowerShellErrorLine(e.Data);
+                    if (!String.IsNullOrWhiteSpace(errorText)) AppendLog("[ERRO] " + errorText);
+                };
+
+                runningProcess = process;
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                while (!process.HasExited)
+                {
+                    if (cancelRequested)
+                    {
+                        KillRunningProcessTree();
+                        return;
+                    }
+
+                    Thread.Sleep(200);
+                }
+
+                process.WaitForExit();
+                runningProcess = null;
+                AppendLog("[INFO] PowerShell local finalizado. ExitCode: " + process.ExitCode);
+                if (process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException("A acao terminou com ExitCode " + process.ExitCode + ".");
+                }
+            }
+        }
+
+        private static string NormalizePowerShellErrorLine(string text)
+        {
+            if (String.IsNullOrWhiteSpace(text) || String.Equals(text.Trim(), "#< CLIXML", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            string value = text.Trim();
+            if (value.StartsWith("<Objs", StringComparison.OrdinalIgnoreCase) && value.IndexOf("powershell/2004/04", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                if (value.IndexOf("S=\"progress\"", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return null;
+                }
+
+                value = value.Replace("_x000D__x000A_", Environment.NewLine).Replace("_x000A_", Environment.NewLine);
+                value = System.Text.RegularExpressions.Regex.Replace(value, "<[^>]+>", " ");
+                value = WebUtility.HtmlDecode(value);
+                value = System.Text.RegularExpressions.Regex.Replace(value, "[ \\t]+", " ");
+                return value.Trim();
+            }
+
+            return value;
+        }
+
+        private int CalcUnitProgress(int localPercent)
+        {
+            if (localPercent < 0) localPercent = 0;
+            if (localPercent > 100) localPercent = 100;
+            double units = completedUnits + (localPercent / 100.0);
+            int value = (int)Math.Round((units * 100.0) / Math.Max(1, totalUnits));
+            if (value < 0) value = 0;
+            if (value > 100) value = 100;
+            return value;
+        }
+
+        private bool TryParseExecutionProgress(string line, out int localPercent, out ExecutionProgressInfo progressInfo)
+        {
+            localPercent = 0;
+            progressInfo = null;
+            if (String.IsNullOrWhiteSpace(line) || !line.StartsWith("TEK_PROGRESS|", StringComparison.Ordinal)) return false;
+
+            string[] parts = line.Split(new char[] { '|' }, 5);
+            if (parts.Length < 4 || !Int32.TryParse(parts[1], out localPercent)) return false;
+            int etaSeconds;
+            if (!Int32.TryParse(parts[3], out etaSeconds)) etaSeconds = -1;
+            string detail = parts.Length >= 5 ? parts[4] : "";
+            progressInfo = new ExecutionProgressInfo(parts[2], etaSeconds, detail, true);
+            return true;
+        }
+
+        private string BuildPowerShellArray(List<string> values)
+        {
+            List<string> quoted = new List<string>();
+            for (int i = 0; i < values.Count; i++)
+            {
+                quoted.Add("'" + (values[i] ?? "").Replace("'", "''") + "'");
+            }
+
+            return "@(" + String.Join(",", quoted.ToArray()) + ")";
+        }
+
+        private Image TrimTransparentImage(Image source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            Bitmap bitmap = new Bitmap(source);
+            source.Dispose();
+            int left = bitmap.Width;
+            int top = bitmap.Height;
+            int right = -1;
+            int bottom = -1;
+
+            for (int y = 0; y < bitmap.Height; y += 2)
+            {
+                for (int x = 0; x < bitmap.Width; x += 2)
+                {
+                    if (bitmap.GetPixel(x, y).A <= 10)
+                    {
+                        continue;
+                    }
+
+                    if (x < left) left = x;
+                    if (x > right) right = x;
+                    if (y < top) top = y;
+                    if (y > bottom) bottom = y;
+                }
+            }
+
+            if (right < left || bottom < top)
+            {
+                return bitmap;
+            }
+
+            int padding = 12;
+            left = Math.Max(0, left - padding);
+            top = Math.Max(0, top - padding);
+            right = Math.Min(bitmap.Width - 1, right + padding);
+            bottom = Math.Min(bitmap.Height - 1, bottom + padding);
+
+            Bitmap trimmed = new Bitmap(
+                right - left + 1,
+                bottom - top + 1,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            using (Graphics g = Graphics.FromImage(trimmed))
+            {
+                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                g.DrawImage(
+                    bitmap,
+                    new Rectangle(0, 0, trimmed.Width, trimmed.Height),
+                    new Rectangle(left, top, trimmed.Width, trimmed.Height),
+                    GraphicsUnit.Pixel);
+            }
+
+            bitmap.Dispose();
+            return trimmed;
+        }
+    }
 
     internal sealed class CollapsibleSection : Panel
     {
@@ -3707,2376 +4383,6 @@ namespace TekSoftwareSuporte
             g.DrawLine(p, 4, 6, 7, 9);
             g.DrawLine(p, 7, 9, 4, 12);
             g.DrawLine(p, 9, 12, 14, 12);
-        }
-
-        private void DrawNetwork(Graphics g, Pen p, Brush b)
-        {
-            g.DrawRectangle(p, 7, 1, 4, 4);
-            g.DrawRectangle(p, 1, 12, 4, 4);
-            g.DrawRectangle(p, 13, 12, 4, 4);
-            g.DrawLine(p, 9, 5, 9, 9);
-            g.DrawLine(p, 9, 9, 3, 12);
-            g.DrawLine(p, 9, 9, 15, 12);
-        }
-
-        private void DrawCertificate(Graphics g, Pen p, Brush b)
-        {
-            g.DrawRectangle(p, 3, 1, 12, 14);
-            g.DrawLine(p, 6, 5, 12, 5);
-            g.DrawLine(p, 6, 8, 12, 8);
-            g.FillEllipse(b, 6, 10, 6, 6);
-            g.DrawLine(p, 7, 15, 6, 17);
-            g.DrawLine(p, 11, 15, 12, 17);
-        }
-
-        private void DrawApps(Graphics g, Pen p, Brush b)
-        {
-            g.DrawRectangle(p, 2, 2, 5, 5);
-            g.DrawRectangle(p, 11, 2, 5, 5);
-            g.DrawRectangle(p, 2, 11, 5, 5);
-            g.DrawRectangle(p, 11, 11, 5, 5);
-        }
-
-        private void DrawSoftware(Graphics g, Pen p, Brush b)
-        {
-            Point[] box = new Point[]
-            {
-                new Point(9, 1), new Point(16, 5), new Point(16, 13),
-                new Point(9, 17), new Point(2, 13), new Point(2, 5)
-            };
-            g.DrawPolygon(p, box);
-            g.DrawLine(p, 2, 5, 9, 9);
-            g.DrawLine(p, 16, 5, 9, 9);
-            g.DrawLine(p, 9, 9, 9, 17);
-        }
-
-        private void DrawServer(Graphics g, Pen p, Brush b)
-        {
-            g.DrawRectangle(p, 3, 2, 12, 5);
-            g.DrawRectangle(p, 3, 10, 12, 5);
-            g.FillEllipse(b, 5, 4, 1.8F, 1.8F);
-            g.FillEllipse(b, 5, 12, 1.8F, 1.8F);
-            g.DrawLine(p, 8, 4, 13, 4);
-            g.DrawLine(p, 8, 12, 13, 12);
-        }
-
-        private void DrawPrinter(Graphics g, Pen p, Brush b)
-        {
-            g.DrawRectangle(p, 4, 1, 10, 5);
-            g.DrawRectangle(p, 2, 7, 14, 7);
-            g.DrawRectangle(p, 5, 12, 8, 5);
-            g.FillEllipse(b, 13, 9, 1.8F, 1.8F);
-        }
-
-        private void DrawWindows(Graphics g, Pen p, Brush b)
-        {
-            g.DrawRectangle(p, 2, 2, 6, 6);
-            g.DrawRectangle(p, 10, 2, 6, 6);
-            g.DrawRectangle(p, 2, 10, 6, 6);
-            g.DrawRectangle(p, 10, 10, 6, 6);
-        }
-    }
-
-    internal sealed class GearPanel : Panel
-    {
-        public GearPanel()
-        {
-            DoubleBuffered = true;
-            BackColor = Color.Transparent;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-
-            int cx = Width / 2;
-            int cy = Height / 2;
-            Color blue = Color.FromArgb(24, 118, 224);
-
-            using (Brush b = new SolidBrush(blue))
-            {
-                for (int i = 0; i < 8; i++)
-                {
-                    double angle = i * Math.PI / 4.0;
-                    int x = cx + (int)(Math.Cos(angle) * 11) - 3;
-                    int y = cy + (int)(Math.Sin(angle) * 11) - 3;
-                    e.Graphics.FillRectangle(b, x, y, 6, 6);
-                }
-
-                e.Graphics.FillEllipse(b, 5, 5, Width - 10, Height - 10);
-            }
-
-            using (Brush white = new SolidBrush(Color.White))
-            {
-                e.Graphics.FillEllipse(white, cx - 5, cy - 5, 10, 10);
-            }
-        }
-    }
-
-    internal sealed class InfoCircle : Panel
-    {
-        public InfoCircle()
-        {
-            DoubleBuffered = true;
-            BackColor = Color.Transparent;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-
-            using (Pen p = new Pen(ForeColor, 2F))
-            {
-                e.Graphics.DrawEllipse(p, 2, 2, Width - 5, Height - 5);
-            }
-
-            using (Brush b = new SolidBrush(ForeColor))
-            using (Font f = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point))
-            {
-                StringFormat sf = new StringFormat();
-                sf.Alignment = StringAlignment.Center;
-                sf.LineAlignment = StringAlignment.Center;
-                e.Graphics.DrawString("i", f, b, ClientRectangle, sf);
-            }
-        }
-    }
-}
- }) | Select-Object -First 1");
-            command.AppendLine("if ([string]::IsNullOrWhiteSpace([string]$odtUrl)) { throw 'A Microsoft nao retornou o link da Office Deployment Tool.' }");
-            command.AppendLine("$odtPackage = Join-Path $work 'OfficeDeploymentTool.exe'");
-            command.AppendLine("Write-Output 'TEK_PROGRESS|8|Baixando a Office Deployment Tool|-1|'");
-            command.AppendLine("Write-Output 'Baixando a Office Deployment Tool sem abrir o navegador...'");
-            command.AppendLine("Invoke-WebRequest -UseBasicParsing -Uri $odtUrl -OutFile $odtPackage");
-            command.AppendLine("$signature = Get-AuthenticodeSignature -FilePath $odtPackage");
-            command.AppendLine("if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'A assinatura digital da Office Deployment Tool nao e valida.' }");
-            command.AppendLine("Write-Output 'TEK_PROGRESS|12|Assinatura Microsoft validada|-1|'");
-            command.AppendLine("Write-Output 'Assinatura digital Microsoft validada.'");
-            command.AppendLine("$extractArgs = '/quiet /extract:\"' + $odtDir + '\"'");
-            command.AppendLine("$extract = Start-Process -FilePath $odtPackage -ArgumentList $extractArgs -WindowStyle Hidden -Wait -PassThru");
-            command.AppendLine("if ($extract.ExitCode -ne 0) { throw ('Falha ao extrair a Office Deployment Tool. Codigo: ' + $extract.ExitCode) }");
-            command.AppendLine("$setup = Join-Path $odtDir 'setup.exe'");
-            command.AppendLine("if (!(Test-Path -LiteralPath $setup)) { throw 'setup.exe nao encontrado na Office Deployment Tool.' }");
-            command.AppendLine("Write-Output 'TEK_PROGRESS|15|Preparando os arquivos do Office|-1|'");
-            command.AppendLine("$edition = if ([Environment]::Is64BitOperatingSystem) { '64' } else { '32' }");
-            command.AppendLine("$clickToRun = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration' -ErrorAction SilentlyContinue");
-            command.AppendLine("if ($clickToRun.Platform -match 'x86|32') { $edition = '32' }");
-            command.AppendLine("$productXml = @($productIds | ForEach-Object { '    <Product ID=\"' + $_ + '\">' + [Environment]::NewLine + '      <Language ID=\"' + $language + '\" />' + [Environment]::NewLine + '    </Product>' }) -join [Environment]::NewLine");
-            command.AppendLine("$configuration = '<Configuration>' + [Environment]::NewLine + '  <Add OfficeClientEdition=\"' + $edition + '\" SourcePath=\"' + $officeSource + '\" AllowCdnFallback=\"TRUE\">' + [Environment]::NewLine + $productXml + [Environment]::NewLine + '  </Add>' + [Environment]::NewLine + '  <Display Level=\"None\" AcceptEULA=\"TRUE\" />' + [Environment]::NewLine + '  <Updates Enabled=\"TRUE\" />' + [Environment]::NewLine + '  <Property Name=\"FORCEAPPSHUTDOWN\" Value=\"FALSE\" />' + [Environment]::NewLine + '</Configuration>'");
-            command.AppendLine("$configurationPath = Join-Path $work 'configuration.xml'");
-            command.AppendLine("Set-Content -LiteralPath $configurationPath -Value $configuration -Encoding UTF8");
-            command.AppendLine("$doBaseline = @{}");
-            command.AppendLine("$doAvailable = $null -ne (Get-Command Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue)");
-            command.AppendLine("if ($doAvailable) { Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue | Where-Object { $_.PredefinedCallerApplication -eq 'Microsoft Office Click-to-Run' -and $_.SourceUrl -match '(?i)(officecdn|c2r\\.ts\\.cdn\\.office)' } | ForEach-Object { $doBaseline[$_.FileId] = [long]$_.TotalBytesDownloaded } }");
-            command.AppendLine("$downloadArgs = '/download \"' + $configurationPath + '\"'");
-            command.AppendLine("$download = Start-Process -FilePath $setup -ArgumentList $downloadArgs -WindowStyle Hidden -PassThru");
-            command.AppendLine("$downloadStarted = Get-Date");
-            command.AppendLine("$lastSampleAt = $downloadStarted");
-            command.AppendLine("$lastDownloadedBytes = 0L");
-            command.AppendLine("$smoothedBytesPerSecond = 0.0");
-            command.AppendLine("$displayDownloadPercent = 0");
-            command.AppendLine("while (!$download.HasExited) {");
-            command.AppendLine("  Start-Sleep -Seconds 2");
-            command.AppendLine("  $now = Get-Date");
-            command.AppendLine("  $downloadElapsed = [Math]::Max(1, ($now - $downloadStarted).TotalSeconds)");
-            command.AppendLine("  $knownTotalBytes = 0L; $downloadedBytes = 0L");
-            command.AppendLine("  if ($doAvailable) {");
-            command.AppendLine("    $doItems = @(Get-DeliveryOptimizationStatus -ErrorAction SilentlyContinue | Where-Object { $_.PredefinedCallerApplication -eq 'Microsoft Office Click-to-Run' -and $_.SourceUrl -match '(?i)(officecdn|c2r\\.ts\\.cdn\\.office)' })");
-            command.AppendLine("    foreach ($doItem in $doItems) { $baselineBytes = if ($doBaseline.ContainsKey($doItem.FileId)) { [long]$doBaseline[$doItem.FileId] } else { 0L }; $itemSize = [Math]::Max([long]0, ([long]$doItem.FileSize - [Math]::Min([long]$doItem.FileSize, $baselineBytes))); $itemDownloaded = [Math]::Max([long]0, ([long]$doItem.TotalBytesDownloaded - $baselineBytes)); $knownTotalBytes += $itemSize; $downloadedBytes += [Math]::Min($itemSize, $itemDownloaded) }");
-            command.AppendLine("  }");
-            command.AppendLine("  if ($knownTotalBytes -le 0) { $downloadMeasure = Get-ChildItem -LiteralPath $officeSource -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum; $downloadedBytes = if ($null -eq $downloadMeasure.Sum) { 0L } else { [long]$downloadMeasure.Sum } }");
-            command.AppendLine("  $sampleSeconds = [Math]::Max(0.25, ($now - $lastSampleAt).TotalSeconds)");
-            command.AppendLine("  $deltaBytes = [Math]::Max([long]0, ([long]$downloadedBytes - [long]$lastDownloadedBytes))");
-            command.AppendLine("  $instantBytesPerSecond = $deltaBytes / $sampleSeconds");
-            command.AppendLine("  if ($instantBytesPerSecond -gt 0 -and $instantBytesPerSecond -lt 500MB) { $smoothedBytesPerSecond = if ($smoothedBytesPerSecond -le 0) { $instantBytesPerSecond } else { ($smoothedBytesPerSecond * 0.72) + ($instantBytesPerSecond * 0.28) } }");
-            command.AppendLine("  if ($knownTotalBytes -gt 0) { $rawDownloadPercent = [Math]::Min(99, [Math]::Round(($downloadedBytes * 100.0) / $knownTotalBytes)); $displayDownloadPercent = [Math]::Max($displayDownloadPercent, $rawDownloadPercent) }");
-            command.AppendLine("  $localPercent = if ($knownTotalBytes -gt 0) { 15 + [int][Math]::Round($displayDownloadPercent * 0.65) } else { [Math]::Min(24, 15 + [int][Math]::Floor($downloadElapsed / 30)) }");
-            command.AppendLine("  $downloadEta = if ($knownTotalBytes -ge 500MB -and $knownTotalBytes -gt $downloadedBytes -and $smoothedBytesPerSecond -gt 0.1MB -and $downloadElapsed -ge 15) { [int][Math]::Ceiling(($knownTotalBytes - $downloadedBytes) / $smoothedBytesPerSecond) } else { -1 }");
-            command.AppendLine("  $downloadMessage = if ($knownTotalBytes -gt 0) { 'Download do Office - {0:N0} / {1:N0} MB' -f ($downloadedBytes / 1MB), ($knownTotalBytes / 1MB) } else { 'Identificando arquivos do Office - {0:N0} MB' -f ($downloadedBytes / 1MB) }");
-            command.AppendLine("  $speedText = if ($smoothedBytesPerSecond -gt 0.1MB) { '{0:N1} MB/s' -f ($smoothedBytesPerSecond / 1MB) } else { 'medindo velocidade' }");
-            command.AppendLine("  Write-Output ('TEK_PROGRESS|' + $localPercent + '|' + $downloadMessage + '|' + $downloadEta + '|' + $speedText)");
-            command.AppendLine("  $lastDownloadedBytes = $downloadedBytes; $lastSampleAt = $now");
-            command.AppendLine("}");
-            command.AppendLine("$download.WaitForExit()");
-            command.AppendLine("if ($download.ExitCode -ne 0) { throw ('Falha ao baixar os arquivos do Office. Codigo: ' + $download.ExitCode) }");
-            command.AppendLine("Write-Output ('TEK_PROGRESS|80|Download do Office concluido|' + $estimatedInstallSeconds + '|preparando instalacao')");
-            command.AppendLine("Write-Output ('Iniciando instalacao silenciosa do Office ' + $edition + ' bits.')");
-            command.AppendLine("$installArgs = '/configure \"' + $configurationPath + '\"'");
-            command.AppendLine("$install = Start-Process -FilePath $setup -ArgumentList $installArgs -WindowStyle Hidden -PassThru");
-            command.AppendLine("$installStarted = Get-Date");
-            command.AppendLine("while (!$install.HasExited) {");
-            command.AppendLine("  Start-Sleep -Seconds 5");
-            command.AppendLine("  $installElapsed = [int][Math]::Floor(((Get-Date) - $installStarted).TotalSeconds)");
-            command.AppendLine("  $installFraction = [Math]::Min(0.96, $installElapsed / [double]$estimatedInstallSeconds)");
-            command.AppendLine("  $localPercent = 80 + [int][Math]::Floor($installFraction * 19)");
-            command.AppendLine("  $installEta = [Math]::Max(0, $estimatedInstallSeconds - $installElapsed)");
-            command.AppendLine("  $installMessage = if ($installElapsed -gt $estimatedInstallSeconds) { 'Finalizando a instalacao do Office' } else { 'Instalando o Office em segundo plano' }");
-            command.AppendLine("  Write-Output ('TEK_PROGRESS|' + $localPercent + '|' + $installMessage + '|' + $installEta + '|fase de instalacao')");
-            command.AppendLine("}");
-            command.AppendLine("$install.WaitForExit()");
-            command.AppendLine("if ($install.ExitCode -ne 0) { throw ('A Office Deployment Tool terminou com o codigo ' + $install.ExitCode + '.') }");
-            command.AppendLine("$cleanupPath = [string]$work");
-            command.AppendLine("$tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\\') + '\\'");
-            command.AppendLine("$cleanupPath = [IO.Path]::GetFullPath($cleanupPath)");
-            command.AppendLine("if (!$cleanupPath.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($cleanupPath) -notlike 'TEK_Office_*') { throw 'Pasta temporaria do Office invalida.' }");
-            command.AppendLine("try { if ([IO.Directory]::Exists($cleanupPath)) { [IO.Directory]::Delete($cleanupPath, $true) } } catch { Write-Output ('AVISO: a pasta temporaria podera ser removida depois: ' + $cleanupPath) }");
-            command.AppendLine("Write-Output 'TEK_PROGRESS|100|Office instalado com sucesso|0|concluido'");
-            command.AppendLine("Write-Output 'Office baixado e instalado com sucesso.'");
-            return command.ToString();
-        }
-
-        private void OpenElevatedPowerShell(string command, string label)
-        {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = "powershell.exe";
-                psi.Arguments = "-NoExit -NoProfile -ExecutionPolicy Bypass -Command " + QuoteArgument(command);
-                psi.Verb = "runas";
-                psi.UseShellExecute = true;
-                Process.Start(psi);
-                AppendLog("[OK] PowerShell aberto como administrador: " + label);
-            }
-            catch (Win32Exception ex)
-            {
-                AppendLog("[AVISO] A elevacao foi cancelada ou nao foi autorizada: " + ex.Message);
-            }
-            catch (Exception ex)
-            {
-                AppendLog("[AVISO] Nao foi possivel abrir o PowerShell: " + ex.Message);
-            }
-        }
-
-        private void OpenShellTarget(string target, string label)
-        {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = target;
-                psi.UseShellExecute = true;
-                Process.Start(psi);
-                AppendLog("[OK] Aberto: " + label);
-            }
-            catch (Exception ex)
-            {
-                AppendLog("[AVISO] Nao foi possivel abrir " + label + ": " + ex.Message);
-            }
-        }
-
-        private void OpenDownloadedApplication(string fileName, string label, BackgroundWorker bg)
-        {
-            string path = Path.Combine(tempDir, fileName);
-            if (!File.Exists(path))
-            {
-                throw new FileNotFoundException("Arquivo baixado nao encontrado.", path);
-            }
-
-            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Abrindo " + label + "...");
-            AppendLog("[INFO] Abrindo " + label + ": " + path);
-
-            ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = path;
-            psi.WorkingDirectory = Path.GetDirectoryName(path);
-            psi.UseShellExecute = true;
-            Process.Start(psi);
-            AppendLog("[OK] " + label + " iniciado.");
-        }
-
-        private void InstallAndOpenTeamViewer(BackgroundWorker bg)
-        {
-            string installerPath = Path.Combine(tempDir, "TeamViewer_Setup.exe");
-            if (!File.Exists(installerPath))
-            {
-                throw new FileNotFoundException("Instalador do TeamViewer nao encontrado.", installerPath);
-            }
-
-            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Instale o TeamViewer na janela aberta...");
-            AppendLog("[INFO] Abrindo instalador oficial do TeamViewer.");
-            AppendLog("[INFO] Conclua a instalacao padrao e aceite os termos apresentados pelo fornecedor.");
-
-            ProcessStartInfo installerInfo = new ProcessStartInfo();
-            installerInfo.FileName = installerPath;
-            installerInfo.WorkingDirectory = Path.GetDirectoryName(installerPath);
-            installerInfo.UseShellExecute = true;
-
-            using (Process installer = Process.Start(installerInfo))
-            {
-                runningProcess = installer;
-                while (installer != null && !installer.HasExited)
-                {
-                    if (cancelRequested)
-                    {
-                        KillRunningProcessTree();
-                        return;
-                    }
-
-                    Thread.Sleep(300);
-                }
-
-                if (installer != null)
-                {
-                    AppendLog("[INFO] Instalador do TeamViewer finalizado. ExitCode: " + installer.ExitCode);
-                    if (installer.ExitCode != 0)
-                    {
-                        throw new InvalidOperationException("A instalacao do TeamViewer terminou com ExitCode " + installer.ExitCode + ".");
-                    }
-                }
-            }
-
-            runningProcess = null;
-            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Localizando TeamViewer instalado...");
-
-            string teamViewerPath = "";
-            for (int attempt = 0; attempt < 40 && !cancelRequested; attempt++)
-            {
-                teamViewerPath = FindTeamViewerExecutable();
-                if (!String.IsNullOrWhiteSpace(teamViewerPath))
-                {
-                    break;
-                }
-
-                Thread.Sleep(500);
-            }
-
-            if (cancelRequested)
-            {
-                return;
-            }
-
-            if (String.IsNullOrWhiteSpace(teamViewerPath))
-            {
-                throw new FileNotFoundException("A instalacao terminou, mas o executavel do TeamViewer nao foi localizado.");
-            }
-
-            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), "Abrindo TeamViewer...");
-            AppendLog("[INFO] Abrindo TeamViewer: " + teamViewerPath);
-
-            ProcessStartInfo teamViewerInfo = new ProcessStartInfo();
-            teamViewerInfo.FileName = teamViewerPath;
-            teamViewerInfo.WorkingDirectory = Path.GetDirectoryName(teamViewerPath);
-            teamViewerInfo.UseShellExecute = true;
-            Process.Start(teamViewerInfo);
-            AppendLog("[OK] TeamViewer aberto para exibir os dados de acesso.");
-        }
-
-        private string FindTeamViewerExecutable()
-        {
-            List<string> candidates = new List<string>();
-            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            if (!String.IsNullOrWhiteSpace(programFiles))
-            {
-                candidates.Add(Path.Combine(programFiles, "TeamViewer", "TeamViewer.exe"));
-            }
-
-            if (!String.IsNullOrWhiteSpace(programFilesX86))
-            {
-                candidates.Add(Path.Combine(programFilesX86, "TeamViewer", "TeamViewer.exe"));
-            }
-
-            if (!String.IsNullOrWhiteSpace(localAppData))
-            {
-                candidates.Add(Path.Combine(localAppData, "TeamViewer", "TeamViewer.exe"));
-            }
-
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                if (File.Exists(candidates[i]))
-                {
-                    return candidates[i];
-                }
-            }
-
-            return "";
-        }
-
-        private void ApplyNetworkConfiguration(NetworkConfigurationPlan plan, BackgroundWorker bg)
-        {
-            RunLocalPowerShellAction("Aplicando configuracao e reparo de rede...", BuildNetworkConfigurationScript(plan), bg);
-        }
-
-        private string BuildNetworkConfigurationScript(NetworkConfigurationPlan plan)
-        {
-            StringBuilder command = new StringBuilder();
-            command.AppendLine("$ErrorActionPreference = 'Stop'");
-            command.AppendLine("$ifIndex = " + plan.InterfaceIndex);
-            command.AppendLine("$alias = " + PowerShellLiteral(plan.InterfaceAlias));
-            command.AppendLine("Write-Output ('Adaptador selecionado: ' + $alias + ' (indice ' + $ifIndex + ')')");
-
-            if (plan.ApplyIpSettings)
-            {
-                if (plan.UseDhcp)
-                {
-                    command.AppendLine("Write-Output 'Restaurando IPv4 automatico por DHCP...'");
-                    command.AppendLine("Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.PrefixOrigin -eq 'Manual' } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue");
-                    command.AppendLine("Get-NetRoute -InterfaceIndex $ifIndex -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue");
-                    command.AppendLine("Set-NetIPInterface -InterfaceIndex $ifIndex -AddressFamily IPv4 -Dhcp Enabled -ErrorAction Stop");
-                    command.AppendLine("Write-Output 'DHCP habilitado.'");
-                }
-                else
-                {
-                    command.AppendLine("Write-Output 'Aplicando endereco IPv4 estatico...'");
-                    command.AppendLine("$targetIp = " + PowerShellLiteral(plan.IpAddress));
-                    command.AppendLine("$currentOnSelected = Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $targetIp } | Select-Object -First 1");
-                    command.AppendLine("if (!$currentOnSelected) {");
-                    command.AppendLine("    Write-Output ('Verificando se o IPv4 ' + $targetIp + ' ja esta em uso...')");
-                    command.AppendLine("    $localOnOtherAdapter = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -eq $targetIp -and $_.InterfaceIndex -ne $ifIndex } | Select-Object -First 1");
-                    command.AppendLine("    $pingInUse = Test-Connection -ComputerName $targetIp -Count 1 -Quiet -ErrorAction SilentlyContinue");
-                    command.AppendLine("    Start-Sleep -Milliseconds 200");
-                    command.AppendLine("    $neighborInUse = Get-NetNeighbor -InterfaceIndex $ifIndex -IPAddress $targetIp -ErrorAction SilentlyContinue | Where-Object { $_.State -notin @('Unreachable','Incomplete') -and ![string]::IsNullOrWhiteSpace([string]$_.LinkLayerAddress) -and $_.LinkLayerAddress -ne '00-00-00-00-00-00' } | Select-Object -First 1");
-                    command.AppendLine("    if ($localOnOtherAdapter -or $pingInUse -or $neighborInUse) { throw ('O IPv4 ' + $targetIp + ' ja esta em uso. Nenhuma configuracao foi alterada. Escolha outro endereco.') }");
-                    command.AppendLine("    Write-Output 'Nenhuma resposta por Ping ou ARP. Prosseguindo com o IPv4 informado.'");
-                    command.AppendLine("} else { Write-Output 'O IPv4 informado ja pertence ao adaptador selecionado.' }");
-                    command.AppendLine("Set-NetIPInterface -InterfaceIndex $ifIndex -AddressFamily IPv4 -Dhcp Disabled -ErrorAction Stop");
-                    command.AppendLine("Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue");
-                    command.AppendLine("Get-NetRoute -InterfaceIndex $ifIndex -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue");
-                    string newIp = "New-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -IPAddress " + PowerShellLiteral(plan.IpAddress) + " -PrefixLength " + plan.PrefixLength;
-                    if (!String.IsNullOrWhiteSpace(plan.Gateway))
-                    {
-                        newIp += " -DefaultGateway " + PowerShellLiteral(plan.Gateway);
-                    }
-                    command.AppendLine(newIp + " -ErrorAction Stop | Out-Null");
-                    command.AppendLine("Write-Output 'IPv4 estatico aplicado.'");
-                }
-            }
-
-            if (plan.ApplyDnsSettings)
-            {
-                if (plan.UseAutomaticDns)
-                {
-                    command.AppendLine("Write-Output 'Restaurando DNS automatico do adaptador...'");
-                    command.AppendLine("Set-DnsClientServerAddress -InterfaceIndex $ifIndex -ResetServerAddresses -ErrorAction Stop");
-                }
-                else
-                {
-                    List<string> dnsServers = new List<string>();
-                    dnsServers.Add(plan.PrimaryDns);
-                    if (!String.IsNullOrWhiteSpace(plan.SecondaryDns)) dnsServers.Add(plan.SecondaryDns);
-                    command.AppendLine("$dnsServers = " + BuildPowerShellArray(dnsServers));
-                    command.AppendLine("Set-DnsClientServerAddress -InterfaceIndex $ifIndex -ServerAddresses $dnsServers -Validate -ErrorAction Stop");
-                    command.AppendLine("Write-Output ('DNS manual aplicado: ' + ($dnsServers -join ', '))");
-                }
-            }
-
-            if (plan.FlushAndRenewDns)
-            {
-                command.AppendLine("Write-Output 'Limpando e registrando o cache DNS...'");
-                command.AppendLine("& ipconfig.exe /flushdns");
-                command.AppendLine("& ipconfig.exe /registerdns");
-                if (plan.UseDhcp)
-                {
-                    command.AppendLine("Write-Output 'Renovando concessao DHCP do adaptador selecionado...'");
-                    command.AppendLine("& ipconfig.exe /release $alias");
-                    command.AppendLine("& ipconfig.exe /renew $alias");
-                }
-            }
-
-            if (plan.ResetWinHttpProxy)
-            {
-                command.AppendLine("Write-Output 'Restaurando proxy WinHTTP...'");
-                command.AppendLine("& netsh.exe winhttp reset proxy");
-            }
-
-            if (plan.EnableTls12)
-            {
-                command.AppendLine("Write-Output 'Restaurando configuracoes seguras de TLS 1.2...'");
-                command.AppendLine("function Set-ToolkitDword([string]$Path,[string]$Name,[int]$Value) { if (!(Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }; New-ItemProperty -Path $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null }");
-                command.AppendLine("foreach ($role in @('Client','Server')) { $path = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\SCHANNEL\\Protocols\\TLS 1.2\\' + $role; Set-ToolkitDword $path 'Enabled' 1; Set-ToolkitDword $path 'DisabledByDefault' 0 }");
-                command.AppendLine("foreach ($path in @('HKLM:\\SOFTWARE\\Microsoft\\.NETFramework\\v4.0.30319','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\.NETFramework\\v4.0.30319')) { Set-ToolkitDword $path 'SchUseStrongCrypto' 1; Set-ToolkitDword $path 'SystemDefaultTlsVersions' 1 }");
-                command.AppendLine("foreach ($path in @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\WinHttp','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\\WinHttp')) { $current = (Get-ItemProperty -Path $path -Name 'DefaultSecureProtocols' -ErrorAction SilentlyContinue).DefaultSecureProtocols; if ($null -eq $current) { $current = 0 }; Set-ToolkitDword $path 'DefaultSecureProtocols' ([int]$current -bor 0x800) }");
-                command.AppendLine("$internetPath = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'; $secure = (Get-ItemProperty -Path $internetPath -Name 'SecureProtocols' -ErrorAction SilentlyContinue).SecureProtocols; if ($null -eq $secure) { $secure = 0 }; Set-ToolkitDword $internetPath 'SecureProtocols' ([int]$secure -bor 0x800)");
-                command.AppendLine("Write-Output 'TLS 1.2 habilitado para SChannel, .NET, WinHTTP e Internet Settings.'");
-            }
-
-            if (plan.ResetWinsockAndTcpIp)
-            {
-                command.AppendLine("Write-Output 'Resetando Winsock e pilha TCP/IP do Windows...'");
-                command.AppendLine("& netsh.exe winsock reset");
-                command.AppendLine("& netsh.exe int ip reset");
-                command.AppendLine("Write-Output '[AVISO] Reinicie o Windows para concluir o reset de Winsock/TCP-IP.'");
-            }
-
-            if (plan.TestConnectivity)
-            {
-                command.AppendLine("Write-Output 'Estado IPv4 atual:'");
-                command.AppendLine("Get-NetIPConfiguration -InterfaceIndex $ifIndex | Format-List InterfaceAlias,IPv4Address,IPv4DefaultGateway,DNSServer | Out-String | Write-Output");
-                command.AppendLine("try { [System.Net.Dns]::GetHostAddresses('www.microsoft.com') | Out-Null; Write-Output '[OK] Resolucao DNS funcionando.' } catch { Write-Output ('[AVISO] Falha no teste DNS: ' + $_.Exception.Message) }");
-                command.AppendLine("try { $https = Test-NetConnection -ComputerName 'www.microsoft.com' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue; if ($https) { Write-Output '[OK] Conexao HTTPS/TLS na porta 443 funcionando.' } else { Write-Output '[AVISO] Nao foi possivel conectar na porta 443.' } } catch { Write-Output ('[AVISO] Falha no teste HTTPS: ' + $_.Exception.Message) }");
-            }
-
-            if (plan.OpenInternetAdvancedOptions)
-            {
-                command.AppendLine("Write-Output 'Abrindo Propriedades da Internet na guia Avancadas...'");
-                command.AppendLine("Start-Process -FilePath 'control.exe' -ArgumentList 'inetcpl.cpl,,6'");
-                command.AppendLine("Write-Output '[INFO] Na guia Avancadas, use Restaurar configuracoes avancadas para confirmar a restauracao.'");
-            }
-
-            command.AppendLine("Write-Output 'Configuracao e reparo de rede finalizados.'");
-            return command.ToString();
-        }
-
-        private string PowerShellLiteral(string value)
-        {
-            return "'" + (value ?? "").Replace("'", "''") + "'";
-        }
-
-        private void RemoveSelectedPrintersAndDrivers(WorkPlan plan, BackgroundWorker bg)
-        {
-            RunLocalPowerShellAction("Removendo impressoras e drivers...", BuildPrinterRemovalScript(plan), bg);
-        }
-
-        private string BuildPrinterRemovalScript(WorkPlan plan)
-        {
-            StringBuilder command = new StringBuilder();
-            command.AppendLine("$ErrorActionPreference = 'Continue'");
-            command.AppendLine("$printers = " + BuildPowerShellArray(plan.PrintersToRemove));
-            command.AppendLine("$drivers = " + BuildPowerShellArray(plan.PrinterDriversToRemove));
-            command.AppendLine("function Test-ToolkitServiceStatus([string]$Name,[string]$Expected,[int]$TimeoutSeconds) {");
-            command.AppendLine("  $limit = (Get-Date).AddSeconds($TimeoutSeconds)");
-            command.AppendLine("  do {");
-            command.AppendLine("    $service = Get-Service -Name $Name -ErrorAction SilentlyContinue");
-            command.AppendLine("    if ($null -eq $service) { return $false }");
-            command.AppendLine("    if ([string]$service.Status -ieq $Expected) { return $true }");
-            command.AppendLine("    Start-Sleep -Milliseconds 250");
-            command.AppendLine("  } while ((Get-Date) -lt $limit)");
-            command.AppendLine("  return $false");
-            command.AppendLine("}");
-            command.AppendLine("function Invoke-ToolkitProcessWithTimeout([string]$File,[string]$Arguments,[int]$TimeoutSeconds) {");
-            command.AppendLine("  $psi = New-Object System.Diagnostics.ProcessStartInfo");
-            command.AppendLine("  $psi.FileName = $File; $psi.Arguments = $Arguments; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true");
-            command.AppendLine("  $process = New-Object System.Diagnostics.Process; $process.StartInfo = $psi");
-            command.AppendLine("  try {");
-            command.AppendLine("    [void]$process.Start()");
-            command.AppendLine("    if (!$process.WaitForExit($TimeoutSeconds * 1000)) {");
-            command.AppendLine("      try { $process.Kill(); [void]$process.WaitForExit(2000) } catch { }");
-            command.AppendLine("      return [pscustomobject]@{ ExitCode = 124; TimedOut = $true }");
-            command.AppendLine("    }");
-            command.AppendLine("    return [pscustomobject]@{ ExitCode = $process.ExitCode; TimedOut = $false }");
-            command.AppendLine("  } catch {");
-            command.AppendLine("    [Console]::Out.WriteLine('[AVISO] Falha ao executar ' + $File + ': ' + $_.Exception.Message)");
-            command.AppendLine("    return [pscustomobject]@{ ExitCode = 1; TimedOut = $false }");
-            command.AppendLine("  } finally { if ($process) { $process.Dispose() } }");
-            command.AppendLine("}");
-            command.AppendLine("function Stop-ToolkitSpooler {");
-            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Stopped' 0) { [Console]::Out.WriteLine('Spooler ja estava parado.'); return $true }");
-            command.AppendLine("  [Console]::Out.WriteLine('Parando spooler (limite de 10 segundos)...')");
-            command.AppendLine("  $result = Invoke-ToolkitProcessWithTimeout 'sc.exe' 'stop Spooler' 10");
-            command.AppendLine("  if ($result.TimedOut) { [Console]::Out.WriteLine('[AVISO] Parada normal do spooler excedeu o limite.') }");
-            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Stopped' 5) { [Console]::Out.WriteLine('Spooler parado.'); return $true }");
-            command.AppendLine("  [Console]::Out.WriteLine('[AVISO] Tentando encerramento forcado do spooler...')");
-            command.AppendLine("  $forced = Invoke-ToolkitProcessWithTimeout 'taskkill.exe' '/F /FI \"SERVICES eq Spooler\"' 8");
-            command.AppendLine("  if ($forced.TimedOut) { [Console]::Out.WriteLine('[AVISO] Parada forcada do spooler excedeu o limite.') }");
-            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Stopped' 5) { [Console]::Out.WriteLine('Spooler parado apos tentativa forcada.'); return $true }");
-            command.AppendLine("  [Console]::Out.WriteLine('[AVISO] Nao foi possivel parar o spooler; o fluxo continuara.')");
-            command.AppendLine("  return $false");
-            command.AppendLine("}");
-            command.AppendLine("function Start-ToolkitSpooler {");
-            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Running' 0) { [Console]::Out.WriteLine('Spooler ja esta em execucao.'); return $true }");
-            command.AppendLine("  [Console]::Out.WriteLine('Iniciando spooler (limite de 10 segundos)...')");
-            command.AppendLine("  $result = Invoke-ToolkitProcessWithTimeout 'sc.exe' 'start Spooler' 10");
-            command.AppendLine("  if ($result.TimedOut) { [Console]::Out.WriteLine('[AVISO] Inicio do spooler excedeu o limite.') }");
-            command.AppendLine("  if (Test-ToolkitServiceStatus 'Spooler' 'Running' 8) { [Console]::Out.WriteLine('Spooler iniciado.'); return $true }");
-            command.AppendLine("  [Console]::Out.WriteLine('[AVISO] Nao foi possivel iniciar o spooler; o fluxo continuara.')");
-            command.AppendLine("  return $false");
-            command.AppendLine("}");
-            command.AppendLine("function Reset-ToolkitSpooler {");
-            command.AppendLine("  $stopped = Stop-ToolkitSpooler");
-            command.AppendLine("  if ($stopped) {");
-            command.AppendLine("    $queue = Join-Path $env:SystemRoot 'System32\\spool\\PRINTERS\\*'");
-            command.AppendLine("    Remove-Item -Path $queue -Force -ErrorAction SilentlyContinue");
-            command.AppendLine("  } else { [Console]::Out.WriteLine('[AVISO] Limpeza da fila ignorada porque o spooler nao parou.') }");
-            command.AppendLine("  $started = Start-ToolkitSpooler");
-            command.AppendLine("  if (!$stopped -or !$started) { [Console]::Out.WriteLine('[AVISO] Reset do spooler concluido parcialmente.') }");
-            command.AppendLine("}");
-            command.AppendLine("foreach ($name in $printers) {");
-            command.AppendLine("  try {");
-            command.AppendLine("    if (Get-Printer -Name $name -ErrorAction SilentlyContinue) {");
-            command.AppendLine("      Write-Output ('Removendo impressora: ' + $name)");
-            command.AppendLine("      Remove-Printer -Name $name -ErrorAction Stop");
-            command.AppendLine("      Write-Output ('Impressora removida: ' + $name)");
-            command.AppendLine("    } else { Write-Output ('[AVISO] Impressora nao encontrada: ' + $name) }");
-            command.AppendLine("  } catch { Write-Output ('[AVISO] Falha ao remover impressora ' + $name + ': ' + $_.Exception.Message) }");
-            command.AppendLine("}");
-            command.AppendLine("if ($printers.Count -gt 0) { Reset-ToolkitSpooler }");
-            command.AppendLine("foreach ($name in $drivers) {");
-            command.AppendLine("  try {");
-            command.AppendLine("    if (Get-PrinterDriver -Name $name -ErrorAction SilentlyContinue) {");
-            command.AppendLine("      Write-Output ('Removendo driver: ' + $name)");
-            command.AppendLine("      Remove-PrinterDriver -Name $name -ErrorAction Stop");
-            command.AppendLine("      Write-Output ('Driver removido: ' + $name)");
-            command.AppendLine("    } else { Write-Output ('[AVISO] Driver nao encontrado: ' + $name) }");
-            command.AppendLine("  } catch {");
-            command.AppendLine("    Write-Output ('[AVISO] Primeira tentativa falhou para ' + $name + ': ' + $_.Exception.Message)");
-            command.AppendLine("    Reset-ToolkitSpooler");
-            command.AppendLine("    try {");
-            command.AppendLine("      Remove-PrinterDriver -Name $name -ErrorAction Stop");
-            command.AppendLine("      Write-Output ('Driver removido apos reset do spooler: ' + $name)");
-            command.AppendLine("    } catch { Write-Output ('[AVISO] Nao foi possivel remover driver ' + $name + ': ' + $_.Exception.Message) }");
-            command.AppendLine("  }");
-            command.AppendLine("}");
-            command.AppendLine("Write-Output 'Remocao de impressoras e drivers finalizada.'");
-            return command.ToString();
-        }
-
-        private void InstallMicrosoftPrintToPdf(BackgroundWorker bg)
-        {
-            RunLocalPowerShellAction("Instalando impressora PDF...", BuildPrintToPdfScript(), bg);
-        }
-
-        private string BuildPrintToPdfScript()
-        {
-            StringBuilder command = new StringBuilder();
-            command.AppendLine("$ErrorActionPreference = 'Stop'");
-            command.AppendLine("$featureName = 'Printing-PrintToPDFServices-Features'");
-            command.AppendLine("$feature = Get-WindowsOptionalFeature -Online -FeatureName $featureName");
-            command.AppendLine("if ($feature.State -ne 'Enabled') {");
-            command.AppendLine("  Write-Output 'Ativando recurso Microsoft Print to PDF...'");
-            command.AppendLine("  $result = Enable-WindowsOptionalFeature -Online -FeatureName $featureName -All -NoRestart");
-            command.AppendLine("  if ($result.RestartNeeded) { Write-Output '[AVISO] O Windows solicitou reinicio para concluir o recurso.' }");
-            command.AppendLine("  Start-Sleep -Seconds 2");
-            command.AppendLine("}");
-            command.AppendLine("$printer = Get-Printer -Name 'Microsoft Print to PDF' -ErrorAction SilentlyContinue");
-            command.AppendLine("if (!$printer) {");
-            command.AppendLine("  $driver = Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)Microsoft.*Print.*PDF' } | Select-Object -First 1");
-            command.AppendLine("  if (!$driver) {");
-            command.AppendLine("    Add-PrinterDriver -Name 'Microsoft Print To PDF' -ErrorAction Stop");
-            command.AppendLine("    $driver = Get-PrinterDriver -Name 'Microsoft Print To PDF' -ErrorAction Stop");
-            command.AppendLine("  }");
-            command.AppendLine("  Add-Printer -Name 'Microsoft Print to PDF' -DriverName $driver.Name -PortName 'PORTPROMPT:' -ErrorAction Stop");
-            command.AppendLine("  Write-Output 'Microsoft Print to PDF instalada.'");
-            command.AppendLine("} else { Write-Output 'Microsoft Print to PDF ja esta instalada.' }");
-            return command.ToString();
-        }
-
-        private void InsertPrinterRegistryEntries(BackgroundWorker bg)
-        {
-            RunLocalPowerShellAction("Inserindo correcoes no registro...", BuildPrinterRegistryScript(), bg);
-        }
-
-        private string BuildPrinterRegistryScript()
-        {
-            StringBuilder command = new StringBuilder();
-            command.AppendLine("$ErrorActionPreference = 'Stop'");
-            command.AppendLine("function Set-ToolkitPrinterDword([string]$Path,[string]$Name,[int]$Value) {");
-            command.AppendLine("  if (!(Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }");
-            command.AppendLine("  New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType DWord -Value $Value -Force | Out-Null");
-            command.AppendLine("  $actual = (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name");
-            command.AppendLine("  if ([int]$actual -ne $Value) { throw ('Falha ao validar ' + $Path + '\\' + $Name) }");
-            command.AppendLine("  Write-Output ('[OK] Registro aplicado: ' + $Path + '\\' + $Name + '=' + $Value)");
-            command.AppendLine("}");
-            command.AppendLine("$printPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Print'");
-            command.AppendLine("Set-ToolkitPrinterDword $printPath 'RpcAuthnLevelPrivacyEnabled' 0");
-            command.AppendLine("$overridePath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Policies\\Microsoft\\FeatureManagement\\Overrides'");
-            command.AppendLine("foreach ($name in @('713073804','3598754956','1921033356')) { Set-ToolkitPrinterDword $overridePath $name 0 }");
-            command.AppendLine("Write-Output 'Correcoes de registro para impressoras inseridas e validadas com sucesso.'");
-            command.AppendLine("Write-Output '[INFO] Reinicie o Windows para garantir que todas as alteracoes sejam aplicadas.'");
-            return command.ToString();
-        }
-
-        private void RunLocalPowerShellAction(string progressText, string command, BackgroundWorker bg)
-        {
-            bg.ReportProgress(CalcPercent(completedUnits, totalUnits), progressText);
-            string wrappedCommand =
-                "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\r\n" +
-                "$OutputEncoding = [Console]::OutputEncoding\r\n" +
-                "$ProgressPreference = 'SilentlyContinue'\r\n" +
-                "try {\r\n& {\r\n" + command + "\r\n}\r\n" +
-                "} catch {\r\n" +
-                "  [Console]::Out.WriteLine(('TEK_ERROR|' + $_.Exception.Message))\r\n" +
-                "  exit 1\r\n" +
-                "}\r\n";
-            string encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(wrappedCommand));
-
-            ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = "powershell.exe";
-            psi.Arguments = "-NoProfile -NonInteractive -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand " + encodedCommand;
-            psi.UseShellExecute = false;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.StandardOutputEncoding = Encoding.UTF8;
-            psi.StandardErrorEncoding = Encoding.UTF8;
-            psi.CreateNoWindow = true;
-            psi.WorkingDirectory = String.IsNullOrWhiteSpace(tempDir) ? Path.GetTempPath() : tempDir;
-
-            using (Process process = new Process())
-            {
-                process.StartInfo = psi;
-                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (!String.IsNullOrWhiteSpace(e.Data))
-                    {
-                        if (e.Data.StartsWith("TEK_ERROR|", StringComparison.Ordinal))
-                        {
-                            AppendLog("[ERRO] " + e.Data.Substring("TEK_ERROR|".Length));
-                            return;
-                        }
-
-                        int localPercent;
-                        ExecutionProgressInfo progressInfo;
-                        if (TryParseExecutionProgress(e.Data, out localPercent, out progressInfo))
-                        {
-                            int overallPercent = CalcUnitProgress(localPercent);
-                            bg.ReportProgress(overallPercent, progressInfo);
-                        }
-                        else
-                        {
-                            AppendLog(e.Data);
-                        }
-                    }
-                };
-                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                {
-                    string errorText = NormalizePowerShellErrorLine(e.Data);
-                    if (!String.IsNullOrWhiteSpace(errorText)) AppendLog("[ERRO] " + errorText);
-                };
-
-                runningProcess = process;
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
-                while (!process.HasExited)
-                {
-                    if (cancelRequested)
-                    {
-                        KillRunningProcessTree();
-                        return;
-                    }
-
-                    Thread.Sleep(200);
-                }
-
-                process.WaitForExit();
-                runningProcess = null;
-                AppendLog("[INFO] PowerShell local finalizado. ExitCode: " + process.ExitCode);
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException("A acao terminou com ExitCode " + process.ExitCode + ".");
-                }
-            }
-        }
-
-        private static string NormalizePowerShellErrorLine(string text)
-        {
-            if (String.IsNullOrWhiteSpace(text) || String.Equals(text.Trim(), "#< CLIXML", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-
-            string value = text.Trim();
-            if (value.StartsWith("<Objs", StringComparison.OrdinalIgnoreCase) && value.IndexOf("powershell/2004/04", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                if (value.IndexOf("S=\"progress\"", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    return null;
-                }
-
-                value = value.Replace("_x000D__x000A_", Environment.NewLine).Replace("_x000A_", Environment.NewLine);
-                value = System.Text.RegularExpressions.Regex.Replace(value, "<[^>]+>", " ");
-                value = WebUtility.HtmlDecode(value);
-                value = System.Text.RegularExpressions.Regex.Replace(value, "[ \\t]+", " ");
-                return value.Trim();
-            }
-
-            return value;
-        }
-
-        private int CalcUnitProgress(int localPercent)
-        {
-            if (localPercent < 0) localPercent = 0;
-            if (localPercent > 100) localPercent = 100;
-            double units = completedUnits + (localPercent / 100.0);
-            int value = (int)Math.Round((units * 100.0) / Math.Max(1, totalUnits));
-            if (value < 0) value = 0;
-            if (value > 100) value = 100;
-            return value;
-        }
-
-        private bool TryParseExecutionProgress(string line, out int localPercent, out ExecutionProgressInfo progressInfo)
-        {
-            localPercent = 0;
-            progressInfo = null;
-            if (String.IsNullOrWhiteSpace(line) || !line.StartsWith("TEK_PROGRESS|", StringComparison.Ordinal)) return false;
-
-            string[] parts = line.Split(new char[] { '|' }, 5);
-            if (parts.Length < 4 || !Int32.TryParse(parts[1], out localPercent)) return false;
-            int etaSeconds;
-            if (!Int32.TryParse(parts[3], out etaSeconds)) etaSeconds = -1;
-            string detail = parts.Length >= 5 ? parts[4] : "";
-            progressInfo = new ExecutionProgressInfo(parts[2], etaSeconds, detail, true);
-            return true;
-        }
-
-        private string BuildPowerShellArray(List<string> values)
-        {
-            List<string> quoted = new List<string>();
-            for (int i = 0; i < values.Count; i++)
-            {
-                quoted.Add("'" + (values[i] ?? "").Replace("'", "''") + "'");
-            }
-
-            return "@(" + String.Join(",", quoted.ToArray()) + ")";
-        }
-
-        private Image TrimTransparentImage(Image source)
-        {
-            if (source == null)
-            {
-                return null;
-            }
-
-            Bitmap bitmap = new Bitmap(source);
-            source.Dispose();
-            int left = bitmap.Width;
-            int top = bitmap.Height;
-            int right = -1;
-            int bottom = -1;
-
-            for (int y = 0; y < bitmap.Height; y += 2)
-            {
-                for (int x = 0; x < bitmap.Width; x += 2)
-                {
-                    if (bitmap.GetPixel(x, y).A <= 10)
-                    {
-                        continue;
-                    }
-
-                    if (x < left) left = x;
-                    if (x > right) right = x;
-                    if (y < top) top = y;
-                    if (y > bottom) bottom = y;
-                }
-            }
-
-            if (right < left || bottom < top)
-            {
-                return bitmap;
-            }
-
-            int padding = 12;
-            left = Math.Max(0, left - padding);
-            top = Math.Max(0, top - padding);
-            right = Math.Min(bitmap.Width - 1, right + padding);
-            bottom = Math.Min(bitmap.Height - 1, bottom + padding);
-
-            Bitmap trimmed = new Bitmap(
-                right - left + 1,
-                bottom - top + 1,
-                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
-            using (Graphics g = Graphics.FromImage(trimmed))
-            {
-                g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-                g.DrawImage(
-                    bitmap,
-                    new Rectangle(0, 0, trimmed.Width, trimmed.Height),
-                    new Rectangle(left, top, trimmed.Width, trimmed.Height),
-                    GraphicsUnit.Pixel);
-            }
-
-            bitmap.Dispose();
-            return trimmed;
-        }
-    }
-
-    internal sealed class CollapsibleSection : Panel
-    {
-        private const int HeaderHeight = 36;
-        private readonly Panel header = new Panel();
-        private readonly Panel content = new Panel();
-        private readonly Label titleLabel = new Label();
-        private readonly Label indicatorLabel = new Label();
-        private int optionCount;
-        private bool expanded;
-
-        public event EventHandler ExpandedChanged;
-
-        public CollapsibleSection(string title, SectionIconKind iconKind, Color accent, Color borderColor)
-        {
-            Height = HeaderHeight;
-            Margin = new Padding(4, 3, 4, 1);
-            BackColor = Color.White;
-            BorderStyle = BorderStyle.FixedSingle;
-
-            header.Dock = DockStyle.Top;
-            header.Height = HeaderHeight;
-            header.BackColor = Color.FromArgb(246, 249, 253);
-            header.Cursor = Cursors.Hand;
-            Controls.Add(header);
-
-            SectionIcon icon = new SectionIcon(iconKind);
-            icon.Left = 12;
-            icon.Top = 8;
-            icon.Width = 18;
-            icon.Height = 18;
-            icon.ForeColor = accent;
-            icon.Cursor = Cursors.Hand;
-            header.Controls.Add(icon);
-
-            titleLabel.Text = title;
-            titleLabel.Left = 40;
-            titleLabel.Top = 7;
-            titleLabel.Width = 250;
-            titleLabel.Height = 22;
-            titleLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            titleLabel.ForeColor = accent;
-            titleLabel.Cursor = Cursors.Hand;
-            titleLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            header.Controls.Add(titleLabel);
-
-            indicatorLabel.Text = ">";
-            indicatorLabel.TextAlign = ContentAlignment.MiddleCenter;
-            indicatorLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            indicatorLabel.ForeColor = accent;
-            indicatorLabel.Width = 28;
-            indicatorLabel.Height = HeaderHeight - 2;
-            indicatorLabel.Left = Width - 32;
-            indicatorLabel.Top = 0;
-            indicatorLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            indicatorLabel.Cursor = Cursors.Hand;
-            header.Controls.Add(indicatorLabel);
-
-            content.Left = 0;
-            content.Top = HeaderHeight;
-            content.Width = Math.Max(1, ClientSize.Width);
-            content.Height = 0;
-            content.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            content.BackColor = Color.White;
-            content.Visible = false;
-            Controls.Add(content);
-
-            header.Click += ToggleExpanded;
-            icon.Click += ToggleExpanded;
-            titleLabel.Click += ToggleExpanded;
-            indicatorLabel.Click += ToggleExpanded;
-        }
-
-        public void AddOption(CheckBox checkBox)
-        {
-            checkBox.Left = 12;
-            checkBox.Top = 5 + (optionCount * 32);
-            checkBox.Width = Math.Max(120, ClientSize.Width - 24);
-            checkBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            content.Controls.Add(checkBox);
-            optionCount++;
-            content.Height = 10 + (optionCount * 32);
-
-            if (expanded)
-            {
-                Height = HeaderHeight + content.Height;
-            }
-        }
-
-        protected override void OnResize(EventArgs e)
-        {
-            base.OnResize(e);
-            content.Width = Math.Max(1, ClientSize.Width);
-            titleLabel.Width = Math.Max(80, ClientSize.Width - 80);
-        }
-
-        private void ToggleExpanded(object sender, EventArgs e)
-        {
-            expanded = !expanded;
-            content.Visible = expanded;
-            indicatorLabel.Text = expanded ? "v" : ">";
-            Height = HeaderHeight + (expanded ? content.Height : 0);
-
-            if (Parent != null)
-            {
-                Parent.PerformLayout();
-            }
-
-            EventHandler handler = ExpandedChanged;
-            if (handler != null)
-            {
-                handler(this, EventArgs.Empty);
-            }
-        }
-    }
-
-    internal sealed class ActionOption
-    {
-        public readonly string Id;
-        public readonly string Title;
-        public readonly CheckBox CheckBox;
-
-        public ActionOption(string id, string title, CheckBox checkBox)
-        {
-            Id = id;
-            Title = title;
-            CheckBox = checkBox;
-        }
-    }
-
-    internal sealed class WorkPlan
-    {
-        public string HostServidor;
-        public PrinterDriver PrinterDriver;
-        public ServerMigrationPlan ServerMigration;
-        public SefazTimeZoneOption SefazTimeZone;
-        public readonly List<string> PrintersToRemove = new List<string>();
-        public readonly List<string> PrinterDriversToRemove = new List<string>();
-        public readonly List<ActionOption> Actions = new List<ActionOption>();
-        public readonly List<DownloadItem> Downloads = new List<DownloadItem>();
-
-        public bool ContainsAction(string id)
-        {
-            for (int i = 0; i < Actions.Count; i++)
-            {
-                if (String.Equals(Actions[i].Id, id, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        public List<string> GetActionIds()
-        {
-            List<string> ids = new List<string>();
-
-            for (int i = 0; i < Actions.Count; i++)
-            {
-                ids.Add(Actions[i].Id);
-            }
-
-            return ids;
-        }
-    }
-
-    internal sealed class DownloadItem
-    {
-        public readonly string Url;
-        public readonly string FileName;
-        public readonly string Name;
-
-        public DownloadItem(string url, string fileName, string name)
-        {
-            Url = url;
-            FileName = fileName;
-            Name = name;
-        }
-    }
-
-    internal sealed class MappingHostDialog : Form
-    {
-        private readonly Color blue = Color.FromArgb(0, 92, 190);
-        private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
-        private readonly Color border = Color.FromArgb(205, 214, 224);
-        private readonly TextBox hostTextBox = new TextBox();
-
-        public string SelectedHost { get; private set; }
-
-        public MappingHostDialog(string currentHost)
-        {
-            Text = "Configurar mapeamento";
-            ClientSize = new Size(520, 224);
-            StartPosition = FormStartPosition.CenterParent;
-            BackColor = Color.White;
-            Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            ShowInTaskbar = false;
-
-            Label title = new Label();
-            title.Text = "Mapear TekSoftware";
-            title.SetBounds(24, 20, 460, 30);
-            title.Font = new Font("Segoe UI", 15F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            Controls.Add(title);
-
-            Label label = new Label();
-            label.Text = "Host do servidor";
-            label.SetBounds(24, 64, 180, 22);
-            label.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            label.ForeColor = blue;
-            Controls.Add(label);
-
-            hostTextBox.SetBounds(24, 92, 176, 28);
-            hostTextBox.CharacterCasing = CharacterCasing.Upper;
-            hostTextBox.Text = String.IsNullOrWhiteSpace(currentHost) ? "SERVIDOR" : currentHost;
-            Controls.Add(hostTextBox);
-
-            AddPresetButton("SERVIDOR", 216);
-            AddPresetButton("SERVER", 316);
-            AddPresetButton("SERVERTEK", 400);
-
-            Button cancelButton = new Button();
-            cancelButton.Text = "Cancelar";
-            cancelButton.SetBounds(300, 164, 92, 36);
-            cancelButton.FlatStyle = FlatStyle.Flat;
-            cancelButton.FlatAppearance.BorderColor = border;
-            cancelButton.BackColor = Color.White;
-            cancelButton.DialogResult = DialogResult.Cancel;
-            Controls.Add(cancelButton);
-
-            Button okButton = new Button();
-            okButton.Text = "Confirmar";
-            okButton.SetBounds(404, 164, 92, 36);
-            okButton.FlatStyle = FlatStyle.Flat;
-            okButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
-            okButton.BackColor = Color.FromArgb(0, 104, 210);
-            okButton.ForeColor = Color.White;
-            okButton.Click += ConfirmSelection;
-            Controls.Add(okButton);
-
-            AcceptButton = okButton;
-            CancelButton = cancelButton;
-            Shown += delegate
-            {
-                hostTextBox.Focus();
-                hostTextBox.SelectAll();
-            };
-        }
-
-        private void AddPresetButton(string text, int left)
-        {
-            Button button = new Button();
-            button.Text = text;
-            button.SetBounds(left, 90, text.Length > 6 ? 88 : 72, 30);
-            button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderColor = border;
-            button.BackColor = Color.White;
-            button.Font = new Font("Segoe UI", 8.5F, FontStyle.Regular, GraphicsUnit.Point);
-            button.Click += delegate { hostTextBox.Text = text; };
-            Controls.Add(button);
-        }
-
-        private void ConfirmSelection(object sender, EventArgs e)
-        {
-            string host = hostTextBox.Text.Trim();
-            if (String.IsNullOrWhiteSpace(host))
-            {
-                MessageBox.Show(this, "Informe o host do servidor.", "Mapear TekSoftware", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                hostTextBox.Focus();
-                return;
-            }
-
-            SelectedHost = host;
-            DialogResult = DialogResult.OK;
-            Close();
-        }
-    }
-
-    internal sealed class SefazTimeZoneOption
-    {
-        public readonly string Label;
-        public readonly string TimeZoneId;
-
-        public SefazTimeZoneOption(string label, string timeZoneId)
-        {
-            Label = label;
-            TimeZoneId = timeZoneId;
-        }
-
-        public override string ToString()
-        {
-            return Label;
-        }
-    }
-
-    internal sealed class SefazTimeZoneDialog : Form
-    {
-        private readonly Color blue = Color.FromArgb(0, 92, 190);
-        private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
-        private readonly Color border = Color.FromArgb(205, 214, 224);
-        private readonly ListBox timeZoneList = new ListBox();
-        private readonly Button okButton = new Button();
-        private readonly Button cancelButton = new Button();
-
-        public SefazTimeZoneOption SelectedOption { get; private set; }
-
-        public SefazTimeZoneDialog(SefazTimeZoneOption currentOption)
-        {
-            Text = "Selecionar UTC";
-            Width = 600;
-            Height = 360;
-            MinimumSize = new Size(600, 360);
-            StartPosition = FormStartPosition.CenterParent;
-            BackColor = Color.White;
-            Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-
-            BuildLayout();
-            LoadOptions(currentOption);
-        }
-
-        private void BuildLayout()
-        {
-            Label title = new Label();
-            title.Text = "SSL/TLS 1.2 SEFAZ";
-            title.Left = 24;
-            title.Top = 18;
-            title.Width = 420;
-            title.Height = 34;
-            title.Font = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            Controls.Add(title);
-
-            Label subtitle = new Label();
-            subtitle.Text = "Selecione o UTC correto do cliente para sincronizar a hora do Windows.";
-            subtitle.Left = 26;
-            subtitle.Top = 58;
-            subtitle.Width = 520;
-            subtitle.Height = 26;
-            subtitle.ForeColor = Color.FromArgb(82, 92, 110);
-            Controls.Add(subtitle);
-
-            timeZoneList.Left = 28;
-            timeZoneList.Top = 98;
-            timeZoneList.Width = 528;
-            timeZoneList.Height = 150;
-            timeZoneList.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
-            timeZoneList.BorderStyle = BorderStyle.FixedSingle;
-            timeZoneList.DoubleClick += delegate { ConfirmSelection(); };
-            Controls.Add(timeZoneList);
-
-            Label note = new Label();
-            note.Text = "Geralmente: GO/SC/SP = UTC-3, AM/MT/MS = UTC-4, AC = UTC-5.";
-            note.Left = 28;
-            note.Top = 258;
-            note.Width = 528;
-            note.Height = 24;
-            note.ForeColor = blue;
-            Controls.Add(note);
-
-            okButton.Text = "Salvar";
-            okButton.Left = 354;
-            okButton.Top = 292;
-            okButton.Width = 96;
-            okButton.Height = 36;
-            okButton.FlatStyle = FlatStyle.Flat;
-            okButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
-            okButton.BackColor = Color.FromArgb(0, 104, 210);
-            okButton.ForeColor = Color.White;
-            okButton.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            okButton.Click += delegate { ConfirmSelection(); };
-            Controls.Add(okButton);
-
-            cancelButton.Text = "Cancelar";
-            cancelButton.Left = 460;
-            cancelButton.Top = 292;
-            cancelButton.Width = 96;
-            cancelButton.Height = 36;
-            cancelButton.FlatStyle = FlatStyle.Flat;
-            cancelButton.FlatAppearance.BorderColor = border;
-            cancelButton.BackColor = Color.White;
-            cancelButton.DialogResult = DialogResult.Cancel;
-            Controls.Add(cancelButton);
-
-            AcceptButton = okButton;
-            CancelButton = cancelButton;
-        }
-
-        private void LoadOptions(SefazTimeZoneOption currentOption)
-        {
-            SefazTimeZoneOption[] options = new SefazTimeZoneOption[]
-            {
-                new SefazTimeZoneOption("UTC-2 - Fernando de Noronha / ilhas oceanicas", "UTC-02"),
-                new SefazTimeZoneOption("UTC-3 - Brasilia / Goiania / Balneario / maior parte do Brasil", "E. South America Standard Time"),
-                new SefazTimeZoneOption("UTC-4 - Amazonas / Manaus / Rondonia / Roraima / MT / MS", "SA Western Standard Time"),
-                new SefazTimeZoneOption("UTC-5 - Acre / sudoeste do Amazonas", "SA Pacific Standard Time")
-            };
-
-            timeZoneList.Items.AddRange(options);
-
-            int selectedIndex = 1;
-
-            if (currentOption != null)
-            {
-                for (int i = 0; i < timeZoneList.Items.Count; i++)
-                {
-                    SefazTimeZoneOption option = timeZoneList.Items[i] as SefazTimeZoneOption;
-
-                    if (option != null && String.Equals(option.TimeZoneId, currentOption.TimeZoneId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        selectedIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            timeZoneList.SelectedIndex = selectedIndex;
-        }
-
-        private void ConfirmSelection()
-        {
-            SefazTimeZoneOption option = timeZoneList.SelectedItem as SefazTimeZoneOption;
-
-            if (option == null)
-            {
-                MessageBox.Show(this, "Selecione um UTC.", "UTC obrigatorio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            SelectedOption = option;
-            DialogResult = DialogResult.OK;
-            Close();
-        }
-    }
-
-    internal sealed class ServerMigrationPlan
-    {
-        public const string DefaultFinalFolders = "ArqPrn;Atualizacao;CFe;Documentos;DocumentosFiscais;NFCe;NFe;Sngpc;versao;XML;Xml;xml;SAT;CTe;MDFe";
-
-        public bool IsNovoServidor;
-        public string HostAntigo = "SERVIDOR";
-        public string TipoVersao = "normal";
-        public bool CopiarPrincipal = true;
-        public bool CopiarFinal;
-        public bool InstalarFull = true;
-        public bool InstalarFirebird = true;
-        public bool ConfigurarRede = true;
-        public bool RenomearReiniciar;
-        public string ExcluirPastas = DefaultFinalFolders;
-
-        public string GetSummary()
-        {
-            if (IsNovoServidor)
-            {
-                return "Novo servidor | origem " + HostAntigo + " | versao " + TipoVersao;
-            }
-
-            return "Servidor antigo | remover Firebird" + (RenomearReiniciar ? " | renomear para ANTIGO" : "");
-        }
-    }
-
-    internal sealed class ServerMigrationDialog : Form
-    {
-        private readonly Color blue = Color.FromArgb(0, 92, 190);
-        private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
-        private readonly Color border = Color.FromArgb(205, 214, 224);
-        private readonly RadioButton novoRadio = new RadioButton();
-        private readonly RadioButton antigoRadio = new RadioButton();
-        private readonly TextBox hostAntigoTextBox = new TextBox();
-        private readonly RadioButton versaoNormalRadio = new RadioButton();
-        private readonly RadioButton versaoIRadio = new RadioButton();
-        private readonly CheckBox copiarPrincipalCheckBox = new CheckBox();
-        private readonly CheckBox copiarFinalCheckBox = new CheckBox();
-        private readonly CheckBox instalarFullCheckBox = new CheckBox();
-        private readonly CheckBox instalarFirebirdCheckBox = new CheckBox();
-        private readonly CheckBox configurarRedeCheckBox = new CheckBox();
-        private readonly CheckBox renomearReiniciarCheckBox = new CheckBox();
-        private readonly TextBox excluirPastasTextBox = new TextBox();
-        private readonly Button okButton = new Button();
-        private readonly Button cancelButton = new Button();
-
-        public ServerMigrationPlan SelectedPlan { get; private set; }
-
-        public ServerMigrationDialog(ServerMigrationPlan currentPlan)
-        {
-            Text = "Troca de servidor";
-            Width = 720;
-            Height = 570;
-            MinimumSize = new Size(720, 570);
-            StartPosition = FormStartPosition.CenterParent;
-            BackColor = Color.White;
-            Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-
-            BuildLayout();
-            LoadPlan(currentPlan);
-            UpdateModeState();
-        }
-
-        private void BuildLayout()
-        {
-            Label title = new Label();
-            title.Text = "Troca de servidor";
-            title.Left = 24;
-            title.Top = 18;
-            title.Width = 420;
-            title.Height = 34;
-            title.Font = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            Controls.Add(title);
-
-            novoRadio.Text = "Configurar novo servidor";
-            novoRadio.Left = 28;
-            novoRadio.Top = 70;
-            novoRadio.Width = 230;
-            novoRadio.CheckedChanged += delegate { UpdateModeState(); };
-            Controls.Add(novoRadio);
-
-            antigoRadio.Text = "Configurar servidor antigo";
-            antigoRadio.Left = 280;
-            antigoRadio.Top = 70;
-            antigoRadio.Width = 230;
-            antigoRadio.CheckedChanged += delegate { UpdateModeState(); };
-            Controls.Add(antigoRadio);
-
-            GroupBox novoBox = new GroupBox();
-            novoBox.Text = "Novo servidor";
-            novoBox.Left = 24;
-            novoBox.Top = 108;
-            novoBox.Width = 660;
-            novoBox.Height = 306;
-            novoBox.ForeColor = blue;
-            Controls.Add(novoBox);
-
-            Label hostLabel = new Label();
-            hostLabel.Text = "Servidor atual antes da renomeacao";
-            hostLabel.Left = 16;
-            hostLabel.Top = 30;
-            hostLabel.Width = 260;
-            hostLabel.Height = 22;
-            hostLabel.ForeColor = Color.FromArgb(38, 48, 64);
-            novoBox.Controls.Add(hostLabel);
-
-            hostAntigoTextBox.Left = 16;
-            hostAntigoTextBox.Top = 54;
-            hostAntigoTextBox.Width = 300;
-            hostAntigoTextBox.Height = 26;
-            hostAntigoTextBox.Text = "SERVIDOR";
-            novoBox.Controls.Add(hostAntigoTextBox);
-
-            Label versionLabel = new Label();
-            versionLabel.Text = "Versao TekFarma";
-            versionLabel.Left = 340;
-            versionLabel.Top = 30;
-            versionLabel.Width = 180;
-            versionLabel.Height = 22;
-            versionLabel.ForeColor = Color.FromArgb(38, 48, 64);
-            novoBox.Controls.Add(versionLabel);
-
-            versaoNormalRadio.Text = "Normal";
-            versaoNormalRadio.Left = 340;
-            versaoNormalRadio.Top = 56;
-            versaoNormalRadio.Width = 90;
-            novoBox.Controls.Add(versaoNormalRadio);
-
-            versaoIRadio.Text = "Versao i";
-            versaoIRadio.Left = 440;
-            versaoIRadio.Top = 56;
-            versaoIRadio.Width = 100;
-            novoBox.Controls.Add(versaoIRadio);
-
-            copiarPrincipalCheckBox.Text = "Pre-copiar TekSoftware sem pastas finais/pesadas";
-            copiarPrincipalCheckBox.Left = 16;
-            copiarPrincipalCheckBox.Top = 104;
-            copiarPrincipalCheckBox.Width = 390;
-            novoBox.Controls.Add(copiarPrincipalCheckBox);
-
-            copiarFinalCheckBox.Text = "Copiar pastas finais por ultimo";
-            copiarFinalCheckBox.Left = 16;
-            copiarFinalCheckBox.Top = 134;
-            copiarFinalCheckBox.Width = 360;
-            novoBox.Controls.Add(copiarFinalCheckBox);
-
-            instalarFullCheckBox.Text = "Executar FULL: versao + Crystal + .NET + VS";
-            instalarFullCheckBox.Left = 16;
-            instalarFullCheckBox.Top = 164;
-            instalarFullCheckBox.Width = 360;
-            novoBox.Controls.Add(instalarFullCheckBox);
-
-            instalarFirebirdCheckBox.Text = "Instalar/reinstalar Firebird no novo servidor";
-            instalarFirebirdCheckBox.Left = 16;
-            instalarFirebirdCheckBox.Top = 194;
-            instalarFirebirdCheckBox.Width = 360;
-            novoBox.Controls.Add(instalarFirebirdCheckBox);
-
-            configurarRedeCheckBox.Text = "Configurar rede e compartilhar C:\\TekSoftware";
-            configurarRedeCheckBox.Left = 16;
-            configurarRedeCheckBox.Top = 224;
-            configurarRedeCheckBox.Width = 360;
-            novoBox.Controls.Add(configurarRedeCheckBox);
-
-            Label excluirLabel = new Label();
-            excluirLabel.Text = "Pastas para deixar por ultimo";
-            excluirLabel.Left = 16;
-            excluirLabel.Top = 254;
-            excluirLabel.Width = 220;
-            excluirLabel.Height = 22;
-            excluirLabel.ForeColor = Color.FromArgb(38, 48, 64);
-            novoBox.Controls.Add(excluirLabel);
-
-            excluirPastasTextBox.Left = 234;
-            excluirPastasTextBox.Top = 252;
-            excluirPastasTextBox.Width = 398;
-            excluirPastasTextBox.Height = 26;
-            novoBox.Controls.Add(excluirPastasTextBox);
-
-            GroupBox antigoBox = new GroupBox();
-            antigoBox.Text = "Servidor antigo";
-            antigoBox.Left = 24;
-            antigoBox.Top = 424;
-            antigoBox.Width = 660;
-            antigoBox.Height = 72;
-            antigoBox.ForeColor = blue;
-            Controls.Add(antigoBox);
-
-            renomearReiniciarCheckBox.Text = "Renomear este computador para ANTIGO/SERVIDOR e reiniciar";
-            renomearReiniciarCheckBox.Left = 16;
-            renomearReiniciarCheckBox.Top = 30;
-            renomearReiniciarCheckBox.Width = 520;
-            antigoBox.Controls.Add(renomearReiniciarCheckBox);
-
-            okButton.Text = "Salvar";
-            okButton.Left = 482;
-            okButton.Top = 510;
-            okButton.Width = 96;
-            okButton.Height = 36;
-            okButton.FlatStyle = FlatStyle.Flat;
-            okButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
-            okButton.BackColor = Color.FromArgb(0, 104, 210);
-            okButton.ForeColor = Color.White;
-            okButton.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            okButton.Click += delegate { ConfirmSelection(); };
-            Controls.Add(okButton);
-
-            cancelButton.Text = "Cancelar";
-            cancelButton.Left = 588;
-            cancelButton.Top = 510;
-            cancelButton.Width = 96;
-            cancelButton.Height = 36;
-            cancelButton.FlatStyle = FlatStyle.Flat;
-            cancelButton.FlatAppearance.BorderColor = border;
-            cancelButton.BackColor = Color.White;
-            cancelButton.DialogResult = DialogResult.Cancel;
-            Controls.Add(cancelButton);
-
-            AcceptButton = okButton;
-            CancelButton = cancelButton;
-        }
-
-        private void LoadPlan(ServerMigrationPlan plan)
-        {
-            if (plan == null)
-            {
-                novoRadio.Checked = true;
-                versaoNormalRadio.Checked = true;
-                copiarPrincipalCheckBox.Checked = true;
-                copiarFinalCheckBox.Checked = false;
-                instalarFullCheckBox.Checked = true;
-                instalarFirebirdCheckBox.Checked = true;
-                configurarRedeCheckBox.Checked = true;
-                renomearReiniciarCheckBox.Checked = false;
-                excluirPastasTextBox.Text = ServerMigrationPlan.DefaultFinalFolders;
-                return;
-            }
-
-            novoRadio.Checked = plan.IsNovoServidor;
-            antigoRadio.Checked = !plan.IsNovoServidor;
-            hostAntigoTextBox.Text = plan.HostAntigo;
-            versaoNormalRadio.Checked = !String.Equals(plan.TipoVersao, "i", StringComparison.OrdinalIgnoreCase);
-            versaoIRadio.Checked = String.Equals(plan.TipoVersao, "i", StringComparison.OrdinalIgnoreCase);
-            copiarPrincipalCheckBox.Checked = plan.CopiarPrincipal;
-            copiarFinalCheckBox.Checked = plan.CopiarFinal;
-            instalarFullCheckBox.Checked = plan.InstalarFull;
-            instalarFirebirdCheckBox.Checked = plan.InstalarFirebird;
-            configurarRedeCheckBox.Checked = plan.ConfigurarRede;
-            renomearReiniciarCheckBox.Checked = plan.RenomearReiniciar;
-            excluirPastasTextBox.Text = plan.ExcluirPastas;
-        }
-
-        private void UpdateModeState()
-        {
-            bool novo = novoRadio.Checked;
-            hostAntigoTextBox.Enabled = novo;
-            versaoNormalRadio.Enabled = novo;
-            versaoIRadio.Enabled = novo;
-            copiarPrincipalCheckBox.Enabled = novo;
-            copiarFinalCheckBox.Enabled = novo;
-            instalarFullCheckBox.Enabled = novo;
-            instalarFirebirdCheckBox.Enabled = novo;
-            configurarRedeCheckBox.Enabled = novo;
-            excluirPastasTextBox.Enabled = novo;
-        }
-
-        private void ConfirmSelection()
-        {
-            ServerMigrationPlan plan = new ServerMigrationPlan();
-            plan.IsNovoServidor = novoRadio.Checked;
-            plan.HostAntigo = String.IsNullOrWhiteSpace(hostAntigoTextBox.Text) ? "SERVIDOR" : hostAntigoTextBox.Text.Trim();
-            plan.TipoVersao = versaoIRadio.Checked ? "i" : "normal";
-            plan.CopiarPrincipal = copiarPrincipalCheckBox.Checked;
-            plan.CopiarFinal = copiarFinalCheckBox.Checked;
-            plan.InstalarFull = instalarFullCheckBox.Checked;
-            plan.InstalarFirebird = instalarFirebirdCheckBox.Checked;
-            plan.ConfigurarRede = configurarRedeCheckBox.Checked;
-            plan.RenomearReiniciar = renomearReiniciarCheckBox.Checked;
-            plan.ExcluirPastas = excluirPastasTextBox.Text.Trim();
-
-            SelectedPlan = plan;
-            DialogResult = DialogResult.OK;
-            Close();
-        }
-    }
-
-    internal sealed class PrinterDriver
-    {
-        public string marca { get; set; }
-        public string modelo { get; set; }
-        public string arquivo { get; set; }
-        public string instalador { get; set; }
-        public string[] instaladores { get; set; }
-        public string origem { get; set; }
-        public long tamanhoBytes { get; set; }
-
-        public string BrandName
-        {
-            get { return marca ?? ""; }
-        }
-
-        public string ModelName
-        {
-            get { return modelo ?? ""; }
-        }
-
-        public string AssetFile
-        {
-            get { return arquivo ?? ""; }
-        }
-
-        public string InstallerPath
-        {
-            get { return instalador ?? ""; }
-        }
-
-        public string DisplayText
-        {
-            get
-            {
-                string text = ModelName;
-
-                if (tamanhoBytes > 0)
-                {
-                    text += "  (" + FormatBytes(tamanhoBytes) + ")";
-                }
-
-                return text;
-            }
-        }
-
-        private static string FormatBytes(long bytes)
-        {
-            if (bytes >= 1024 * 1024)
-            {
-                return Math.Round(bytes / 1024.0 / 1024.0, 1) + " MB";
-            }
-
-            if (bytes >= 1024)
-            {
-                return Math.Round(bytes / 1024.0, 1) + " KB";
-            }
-
-            return bytes + " bytes";
-        }
-    }
-
-    internal sealed class PrinterDriverDialog : Form
-    {
-        private readonly string indexUrl;
-        private readonly PrinterDriver currentDriver;
-        private readonly Color blue = Color.FromArgb(0, 92, 190);
-        private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
-        private readonly Color border = Color.FromArgb(205, 214, 224);
-        private readonly ListBox brandList = new ListBox();
-        private readonly ListBox modelList = new ListBox();
-        private readonly Label statusLabel = new Label();
-        private readonly Label detailLabel = new Label();
-        private readonly Button refreshButton = new Button();
-        private readonly Button okButton = new Button();
-        private readonly Button cancelButton = new Button();
-        private readonly List<PrinterDriver> drivers = new List<PrinterDriver>();
-
-        public PrinterDriver SelectedDriver { get; private set; }
-
-        public PrinterDriverDialog(string indexUrl, PrinterDriver currentDriver)
-        {
-            this.indexUrl = indexUrl;
-            this.currentDriver = currentDriver;
-
-            Text = "Selecionar impressora";
-            Width = 760;
-            Height = 500;
-            MinimumSize = new Size(760, 500);
-            StartPosition = FormStartPosition.CenterParent;
-            BackColor = Color.White;
-            Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-
-            BuildLayout();
-            Load += delegate { LoadIndex(); };
-        }
-
-        private void BuildLayout()
-        {
-            Label title = new Label();
-            title.Text = "Instalar impressora";
-            title.Left = 24;
-            title.Top = 18;
-            title.Width = 420;
-            title.Height = 34;
-            title.Font = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            Controls.Add(title);
-
-            statusLabel.Text = "Carregando indice de drivers...";
-            statusLabel.Left = 26;
-            statusLabel.Top = 58;
-            statusLabel.Width = 560;
-            statusLabel.Height = 24;
-            statusLabel.ForeColor = Color.FromArgb(90, 98, 112);
-            Controls.Add(statusLabel);
-
-            refreshButton.Text = "Atualizar";
-            refreshButton.Left = 628;
-            refreshButton.Top = 24;
-            refreshButton.Width = 96;
-            refreshButton.Height = 32;
-            refreshButton.FlatStyle = FlatStyle.Flat;
-            refreshButton.FlatAppearance.BorderColor = border;
-            refreshButton.BackColor = Color.White;
-            refreshButton.Click += delegate { LoadIndex(); };
-            Controls.Add(refreshButton);
-
-            Label brandTitle = new Label();
-            brandTitle.Text = "Marca";
-            brandTitle.Left = 24;
-            brandTitle.Top = 96;
-            brandTitle.Width = 250;
-            brandTitle.Height = 24;
-            brandTitle.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            brandTitle.ForeColor = blue;
-            Controls.Add(brandTitle);
-
-            brandList.Left = 24;
-            brandList.Top = 124;
-            brandList.Width = 300;
-            brandList.Height = 244;
-            brandList.BorderStyle = BorderStyle.FixedSingle;
-            brandList.SelectedIndexChanged += delegate { PopulateModels(); };
-            Controls.Add(brandList);
-
-            Label modelTitle = new Label();
-            modelTitle.Text = "Modelo";
-            modelTitle.Left = 348;
-            modelTitle.Top = 96;
-            modelTitle.Width = 250;
-            modelTitle.Height = 24;
-            modelTitle.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            modelTitle.ForeColor = blue;
-            Controls.Add(modelTitle);
-
-            modelList.Left = 348;
-            modelList.Top = 124;
-            modelList.Width = 376;
-            modelList.Height = 244;
-            modelList.BorderStyle = BorderStyle.FixedSingle;
-            modelList.DisplayMember = "DisplayText";
-            modelList.SelectedIndexChanged += delegate { UpdateSelectionDetails(); };
-            modelList.DoubleClick += delegate { ConfirmSelection(); };
-            Controls.Add(modelList);
-
-            detailLabel.Text = "Selecione uma marca e um modelo.";
-            detailLabel.Left = 24;
-            detailLabel.Top = 382;
-            detailLabel.Width = 700;
-            detailLabel.Height = 36;
-            detailLabel.AutoEllipsis = true;
-            detailLabel.ForeColor = Color.FromArgb(38, 48, 64);
-            Controls.Add(detailLabel);
-
-            okButton.Text = "Instalar selecionada";
-            okButton.Left = 462;
-            okButton.Top = 424;
-            okButton.Width = 150;
-            okButton.Height = 36;
-            okButton.FlatStyle = FlatStyle.Flat;
-            okButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
-            okButton.BackColor = Color.FromArgb(0, 104, 210);
-            okButton.ForeColor = Color.White;
-            okButton.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            okButton.Enabled = false;
-            okButton.Click += delegate { ConfirmSelection(); };
-            Controls.Add(okButton);
-
-            cancelButton.Text = "Cancelar";
-            cancelButton.Left = 628;
-            cancelButton.Top = 424;
-            cancelButton.Width = 96;
-            cancelButton.Height = 36;
-            cancelButton.FlatStyle = FlatStyle.Flat;
-            cancelButton.FlatAppearance.BorderColor = border;
-            cancelButton.BackColor = Color.White;
-            cancelButton.DialogResult = DialogResult.Cancel;
-            Controls.Add(cancelButton);
-
-            AcceptButton = okButton;
-            CancelButton = cancelButton;
-        }
-
-        private void LoadIndex()
-        {
-            Cursor previousCursor = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
-            refreshButton.Enabled = false;
-            okButton.Enabled = false;
-            statusLabel.Text = "Baixando indice de drivers...";
-            brandList.Items.Clear();
-            modelList.Items.Clear();
-            detailLabel.Text = "Aguarde o carregamento do indice.";
-
-            try
-            {
-                using (WebClient client = new WebClient())
-                {
-                    string json = client.DownloadString(indexUrl);
-                    JavaScriptSerializer serializer = new JavaScriptSerializer();
-                    PrinterDriver[] loaded = serializer.Deserialize<PrinterDriver[]>(json);
-
-                    drivers.Clear();
-
-                    if (loaded != null)
-                    {
-                        for (int i = 0; i < loaded.Length; i++)
-                        {
-                            if (loaded[i] != null && !String.IsNullOrWhiteSpace(loaded[i].BrandName) && !String.IsNullOrWhiteSpace(loaded[i].ModelName) && !String.IsNullOrWhiteSpace(loaded[i].AssetFile))
-                            {
-                                drivers.Add(loaded[i]);
-                            }
-                        }
-                    }
-                }
-
-                drivers.Sort(delegate(PrinterDriver a, PrinterDriver b)
-                {
-                    int brand = String.Compare(a.BrandName, b.BrandName, StringComparison.OrdinalIgnoreCase);
-                    if (brand != 0) return brand;
-                    return String.Compare(a.ModelName, b.ModelName, StringComparison.OrdinalIgnoreCase);
-                });
-
-                PopulateBrands();
-                statusLabel.Text = drivers.Count + " drivers disponiveis.";
-            }
-            catch (Exception ex)
-            {
-                statusLabel.Text = "Erro ao carregar indice de drivers.";
-                detailLabel.Text = ex.Message;
-            }
-            finally
-            {
-                refreshButton.Enabled = true;
-                Cursor.Current = previousCursor;
-            }
-        }
-
-        private void PopulateBrands()
-        {
-            brandList.Items.Clear();
-            modelList.Items.Clear();
-
-            List<string> brands = new List<string>();
-
-            for (int i = 0; i < drivers.Count; i++)
-            {
-                if (!ContainsText(brands, drivers[i].BrandName))
-                {
-                    brands.Add(drivers[i].BrandName);
-                }
-            }
-
-            brands.Sort(StringComparer.OrdinalIgnoreCase);
-
-            for (int i = 0; i < brands.Count; i++)
-            {
-                brandList.Items.Add(brands[i]);
-            }
-
-            if (currentDriver != null)
-            {
-                for (int i = 0; i < brandList.Items.Count; i++)
-                {
-                    if (String.Equals(Convert.ToString(brandList.Items[i]), currentDriver.BrandName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        brandList.SelectedIndex = i;
-                        SelectCurrentModel();
-                        return;
-                    }
-                }
-            }
-
-            if (brandList.Items.Count > 0)
-            {
-                brandList.SelectedIndex = 0;
-            }
-        }
-
-        private void PopulateModels()
-        {
-            modelList.Items.Clear();
-            string brand = Convert.ToString(brandList.SelectedItem);
-
-            for (int i = 0; i < drivers.Count; i++)
-            {
-                if (String.Equals(drivers[i].BrandName, brand, StringComparison.OrdinalIgnoreCase))
-                {
-                    modelList.Items.Add(drivers[i]);
-                }
-            }
-
-            if (modelList.Items.Count > 0)
-            {
-                modelList.SelectedIndex = 0;
-            }
-
-            SelectCurrentModel();
-            UpdateSelectionDetails();
-        }
-
-        private void SelectCurrentModel()
-        {
-            if (currentDriver == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < modelList.Items.Count; i++)
-            {
-                PrinterDriver driver = modelList.Items[i] as PrinterDriver;
-                if (driver != null &&
-                    String.Equals(driver.BrandName, currentDriver.BrandName, StringComparison.OrdinalIgnoreCase) &&
-                    String.Equals(driver.ModelName, currentDriver.ModelName, StringComparison.OrdinalIgnoreCase))
-                {
-                    modelList.SelectedIndex = i;
-                    return;
-                }
-            }
-        }
-
-        private void UpdateSelectionDetails()
-        {
-            PrinterDriver driver = modelList.SelectedItem as PrinterDriver;
-            okButton.Enabled = driver != null;
-
-            if (driver == null)
-            {
-                detailLabel.Text = "Selecione uma marca e um modelo.";
-                return;
-            }
-
-            string installer = String.IsNullOrWhiteSpace(driver.InstallerPath) ? "instalador automatico" : driver.InstallerPath;
-            detailLabel.Text = "Arquivo: " + driver.AssetFile + " | Instalador: " + installer;
-        }
-
-        private void ConfirmSelection()
-        {
-            PrinterDriver driver = modelList.SelectedItem as PrinterDriver;
-
-            if (driver == null)
-            {
-                return;
-            }
-
-            SelectedDriver = driver;
-            DialogResult = DialogResult.OK;
-            Close();
-        }
-
-        private bool ContainsText(List<string> values, string text)
-        {
-            for (int i = 0; i < values.Count; i++)
-            {
-                if (String.Equals(values[i], text, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    internal sealed class PrinterRemovalDialog : Form
-    {
-        private readonly Color blue = Color.FromArgb(0, 92, 190);
-        private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
-        private readonly Color border = Color.FromArgb(205, 214, 224);
-        private readonly CheckedListBox printerList = new CheckedListBox();
-        private readonly CheckedListBox driverList = new CheckedListBox();
-        private readonly Label statusLabel = new Label();
-        private readonly Button refreshButton = new Button();
-        private readonly Button okButton = new Button();
-        private readonly Button cancelButton = new Button();
-
-        public List<string> SelectedPrinters { get; private set; }
-        public List<string> SelectedDrivers { get; private set; }
-
-        public PrinterRemovalDialog()
-        {
-            SelectedPrinters = new List<string>();
-            SelectedDrivers = new List<string>();
-
-            Text = "Remover impressora ou driver atual";
-            Width = 820;
-            Height = 540;
-            MinimumSize = new Size(820, 540);
-            StartPosition = FormStartPosition.CenterParent;
-            BackColor = Color.White;
-            Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-
-            BuildLayout();
-            Load += delegate { LoadInstalledItems(); };
-        }
-
-        private void BuildLayout()
-        {
-            Label title = new Label();
-            title.Text = "Remover impressora atual";
-            title.Left = 24;
-            title.Top = 18;
-            title.Width = 460;
-            title.Height = 34;
-            title.Font = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            Controls.Add(title);
-
-            statusLabel.Text = "Selecione somente o que deseja remover antes da instalacao.";
-            statusLabel.Left = 26;
-            statusLabel.Top = 58;
-            statusLabel.Width = 650;
-            statusLabel.Height = 24;
-            statusLabel.ForeColor = Color.FromArgb(90, 98, 112);
-            Controls.Add(statusLabel);
-
-            refreshButton.Text = "Atualizar";
-            refreshButton.Left = 686;
-            refreshButton.Top = 24;
-            refreshButton.Width = 96;
-            refreshButton.Height = 32;
-            refreshButton.FlatStyle = FlatStyle.Flat;
-            refreshButton.FlatAppearance.BorderColor = border;
-            refreshButton.BackColor = Color.White;
-            refreshButton.Click += delegate { LoadInstalledItems(); };
-            Controls.Add(refreshButton);
-
-            Label printersTitle = new Label();
-            printersTitle.Text = "Impressoras instaladas";
-            printersTitle.Left = 24;
-            printersTitle.Top = 96;
-            printersTitle.Width = 340;
-            printersTitle.Height = 24;
-            printersTitle.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            printersTitle.ForeColor = blue;
-            Controls.Add(printersTitle);
-
-            printerList.Left = 24;
-            printerList.Top = 124;
-            printerList.Width = 370;
-            printerList.Height = 300;
-            printerList.CheckOnClick = true;
-            printerList.BorderStyle = BorderStyle.FixedSingle;
-            printerList.DisplayMember = "DisplayText";
-            Controls.Add(printerList);
-
-            Label driversTitle = new Label();
-            driversTitle.Text = "Drivers instalados";
-            driversTitle.Left = 416;
-            driversTitle.Top = 96;
-            driversTitle.Width = 340;
-            driversTitle.Height = 24;
-            driversTitle.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            driversTitle.ForeColor = blue;
-            Controls.Add(driversTitle);
-
-            driverList.Left = 416;
-            driverList.Top = 124;
-            driverList.Width = 366;
-            driverList.Height = 300;
-            driverList.CheckOnClick = true;
-            driverList.BorderStyle = BorderStyle.FixedSingle;
-            Controls.Add(driverList);
-
-            Label warning = new Label();
-            warning.Text = "Dica: remova primeiro a impressora. Marque o driver apenas quando quiser limpar residuos antes de instalar novamente.";
-            warning.Left = 24;
-            warning.Top = 436;
-            warning.Width = 758;
-            warning.Height = 24;
-            warning.ForeColor = Color.FromArgb(110, 80, 32);
-            Controls.Add(warning);
-
-            okButton.Text = "Continuar";
-            okButton.Left = 574;
-            okButton.Top = 466;
-            okButton.Width = 100;
-            okButton.Height = 36;
-            okButton.FlatStyle = FlatStyle.Flat;
-            okButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
-            okButton.BackColor = Color.FromArgb(0, 104, 210);
-            okButton.ForeColor = Color.White;
-            okButton.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            okButton.Click += delegate { ConfirmSelection(); };
-            Controls.Add(okButton);
-
-            cancelButton.Text = "Cancelar";
-            cancelButton.Left = 686;
-            cancelButton.Top = 466;
-            cancelButton.Width = 96;
-            cancelButton.Height = 36;
-            cancelButton.FlatStyle = FlatStyle.Flat;
-            cancelButton.FlatAppearance.BorderColor = border;
-            cancelButton.BackColor = Color.White;
-            cancelButton.DialogResult = DialogResult.Cancel;
-            Controls.Add(cancelButton);
-
-            AcceptButton = okButton;
-            CancelButton = cancelButton;
-        }
-
-        private void LoadInstalledItems()
-        {
-            Cursor previousCursor = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
-            refreshButton.Enabled = false;
-            statusLabel.Text = "Carregando impressoras e drivers instalados...";
-            printerList.Items.Clear();
-            driverList.Items.Clear();
-
-            try
-            {
-                List<InstalledPrinterInfo> printers = QueryInstalledPrinters();
-                for (int i = 0; i < printers.Count; i++)
-                {
-                    printerList.Items.Add(printers[i], false);
-                }
-
-                List<string> drivers = QueryInstalledDrivers();
-                for (int i = 0; i < drivers.Count; i++)
-                {
-                    driverList.Items.Add(drivers[i], false);
-                }
-
-                statusLabel.Text = printers.Count + " impressoras e " + drivers.Count + " drivers encontrados.";
-            }
-            catch (Exception ex)
-            {
-                statusLabel.Text = "Erro ao carregar impressoras/drivers.";
-                MessageBox.Show(this, ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            finally
-            {
-                refreshButton.Enabled = true;
-                Cursor.Current = previousCursor;
-            }
-        }
-
-        private List<InstalledPrinterInfo> QueryInstalledPrinters()
-        {
-            List<InstalledPrinterInfo> items = new List<InstalledPrinterInfo>();
-            string[] lines = RunPowerShellLines("Get-Printer | Sort-Object Name | ForEach-Object { $_.Name + [char]9 + $_.DriverName }");
-
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string line = lines[i];
-                if (String.IsNullOrWhiteSpace(line)) continue;
-
-                string[] parts = line.Split(new char[] { '\t' }, 2);
-                string name = parts.Length > 0 ? parts[0].Trim() : "";
-                string driver = parts.Length > 1 ? parts[1].Trim() : "";
-
-                if (!String.IsNullOrWhiteSpace(name))
-                {
-                    items.Add(new InstalledPrinterInfo(name, driver));
-                }
-            }
-
-            return items;
-        }
-
-        private List<string> QueryInstalledDrivers()
-        {
-            List<string> items = new List<string>();
-            string[] lines = RunPowerShellLines("Get-PrinterDriver | Sort-Object Name | ForEach-Object { $_.Name }");
-
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string name = lines[i].Trim();
-
-                if (!String.IsNullOrWhiteSpace(name) && !ContainsText(items, name))
-                {
-                    items.Add(name);
-                }
-            }
-
-            return items;
-        }
-
-        private string[] RunPowerShellLines(string command)
-        {
-            ProcessStartInfo psi = new ProcessStartInfo();
-            psi.FileName = "powershell.exe";
-            psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command " + QuoteForPowerShell(command);
-            psi.UseShellExecute = false;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.CreateNoWindow = true;
-
-            using (Process process = new Process())
-            {
-                process.StartInfo = psi;
-                process.Start();
-                string stdout = process.StandardOutput.ReadToEnd();
-                string stderr = process.StandardError.ReadToEnd();
-                process.WaitForExit(15000);
-
-                if (!process.HasExited)
-                {
-                    try { process.Kill(); } catch { }
-                    throw new InvalidOperationException("Tempo limite ao consultar impressoras/drivers.");
-                }
-
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(String.IsNullOrWhiteSpace(stderr) ? "Falha ao consultar impressoras/drivers." : stderr.Trim());
-                }
-
-                return stdout.Split(new string[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
-            }
-        }
-
-        private string QuoteForPowerShell(string value)
-        {
-            if (value == null) value = "";
-            return "\"" + value.Replace("\"", "\\\"") + "\"";
-        }
-
-        private void ConfirmSelection()
-        {
-            SelectedPrinters.Clear();
-            SelectedDrivers.Clear();
-
-            for (int i = 0; i < printerList.CheckedItems.Count; i++)
-            {
-                InstalledPrinterInfo printer = printerList.CheckedItems[i] as InstalledPrinterInfo;
-                if (printer != null && !String.IsNullOrWhiteSpace(printer.Name))
-                {
-                    SelectedPrinters.Add(printer.Name);
-                }
-            }
-
-            for (int i = 0; i < driverList.CheckedItems.Count; i++)
-            {
-                string driver = Convert.ToString(driverList.CheckedItems[i]);
-                if (!String.IsNullOrWhiteSpace(driver))
-                {
-                    SelectedDrivers.Add(driver);
-                }
-            }
-
-            DialogResult = DialogResult.OK;
-            Close();
-        }
-
-        private bool ContainsText(List<string> values, string text)
-        {
-            for (int i = 0; i < values.Count; i++)
-            {
-                if (String.Equals(values[i], text, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    internal sealed class InstalledPrinterInfo
-    {
-        public readonly string Name;
-        public readonly string DriverName;
-
-        public InstalledPrinterInfo(string name, string driverName)
-        {
-            Name = name;
-            DriverName = driverName;
-        }
-
-        public string DisplayText
-        {
-            get
-            {
-                if (String.IsNullOrWhiteSpace(DriverName))
-                {
-                    return Name;
-                }
-
-                return Name + "  |  " + DriverName;
-            }
-        }
-    }
-
-    internal enum SectionIconKind
-    {
-        Network,
-        Certificate,
-        Apps,
-        Software,
-        Server,
-        Printer,
-        Windows
-    }
-
-    internal sealed class SectionIcon : Panel
-    {
-        private readonly SectionIconKind kind;
-
-        public SectionIcon(SectionIconKind kind)
-        {
-            this.kind = kind;
-            DoubleBuffered = true;
-            BackColor = Color.Transparent;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-
-            using (Pen p = new Pen(ForeColor, 1.8F))
-            using (Brush b = new SolidBrush(ForeColor))
-            {
-                switch (kind)
-                {
-                    case SectionIconKind.Network:
-                        DrawNetwork(e.Graphics, p, b);
-                        break;
-                    case SectionIconKind.Certificate:
-                        DrawCertificate(e.Graphics, p, b);
-                        break;
-                    case SectionIconKind.Apps:
-                        DrawApps(e.Graphics, p, b);
-                        break;
-                    case SectionIconKind.Software:
-                        DrawSoftware(e.Graphics, p, b);
-                        break;
-                    case SectionIconKind.Server:
-                        DrawServer(e.Graphics, p, b);
-                        break;
-                    case SectionIconKind.Printer:
-                        DrawPrinter(e.Graphics, p, b);
-                        break;
-                    default:
-                        DrawWindows(e.Graphics, p, b);
-                        break;
-                }
-            }
         }
 
         private void DrawNetwork(Graphics g, Pen p, Brush b)

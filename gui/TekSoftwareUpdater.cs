@@ -246,6 +246,8 @@ namespace TekSoftwareUpdater
         private void RunUpdate()
         {
             string downloadPath = null;
+            bool replaced = false;
+            Process restarted = null;
 
             try
             {
@@ -272,10 +274,11 @@ namespace TekSoftwareUpdater
                 SetProgress(88, "Substituindo o aplicativo...", "Instalando no mesmo local do TekSoftwareSuporte.exe.");
                 UpdaterEngine.ReplaceTarget(downloadPath, options.TargetPath);
                 downloadPath = null;
+                replaced = true;
 
                 SetProgress(100, "Atualizacao concluida", "Reabrindo TekSoftwareSuporte.exe...");
                 Thread.Sleep(700);
-                Process restarted = Process.Start(new ProcessStartInfo
+                restarted = Process.Start(new ProcessStartInfo
                 {
                     FileName = options.TargetPath,
                     WorkingDirectory = Path.GetDirectoryName(options.TargetPath),
@@ -304,7 +307,26 @@ namespace TekSoftwareUpdater
                     try { if (File.Exists(downloadPath)) File.Delete(downloadPath); } catch { }
                 }
 
-                SetFailed(ex.Message);
+                string message = ex.Message;
+                if (replaced)
+                {
+                    try
+                    {
+                        if (restarted != null && !restarted.HasExited)
+                            UpdaterEngine.StopProcess(restarted.Id, options.TargetPath);
+                        UpdaterEngine.RestorePreviousVersion(options.TargetPath);
+                        message += " A versao anterior foi restaurada; abra o suporte novamente.";
+                    }
+                    catch (Exception rollbackError)
+                    {
+                        message += " Backup preservado em " + options.TargetPath + ".previous: " + rollbackError.Message;
+                    }
+                }
+                SetFailed(message);
+            }
+            finally
+            {
+                try { File.Delete(options.TargetPath + ".update-in-progress"); } catch { }
             }
         }
 
@@ -559,6 +581,13 @@ namespace TekSoftwareUpdater
             }
         }
 
+        public static void RestorePreviousVersion(string targetPath)
+        {
+            string backupPath = targetPath + ".previous";
+            if (!File.Exists(backupPath)) throw new FileNotFoundException("Backup do suporte nao encontrado.", backupPath);
+            File.Copy(backupPath, targetPath, true);
+        }
+
         public static bool DeletePreviousBackup(string targetPath)
         {
             try
@@ -614,12 +643,19 @@ namespace TekSoftwareUpdater
                 replacement[replacement.Length - 1] = 123;
                 File.WriteAllBytes(download, replacement);
                 string sha = ComputeSha256(download);
+                bool rejectedBadDigest = false;
+                try { ValidateExecutable(download, new string('0', 64)); }
+                catch { rejectedBadDigest = true; }
+                if (!rejectedBadDigest) return false;
                 ValidateExecutable(download, sha);
                 ReplaceTarget(download, target);
                 byte[] installed = File.ReadAllBytes(target);
                 bool installedCorrectly = installed.Length == replacement.Length && installed[0] == (byte)'M' && installed[installed.Length - 1] == 123;
+                bool backupCorrect = File.ReadAllText(target + ".previous") == "OLD";
+                RestorePreviousVersion(target);
+                bool restoredCorrectly = File.ReadAllText(target) == "OLD";
                 bool backupDeleted = DeletePreviousBackup(target) && !File.Exists(target + ".previous");
-                return installedCorrectly && backupDeleted;
+                return installedCorrectly && backupCorrect && restoredCorrectly && backupDeleted;
             }
             catch
             {

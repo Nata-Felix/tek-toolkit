@@ -88,5 +88,7 @@ try {
     $gui = Get-Content -Raw -LiteralPath (Join-Path $root 'gui\TekSoftwareSuporteGui.cs')
     Assert (!$gui.Contains('SOLPPE') -and !$gui.Contains('toolkit_all.ps1')) 'Referencias do SOLPPE permaneceram no TEK.'
     Assert ($gui.Contains('"/releases/tags/" + Version')) 'Atualizador deve usar a release do bootstrap.'
+    $bootstrap = Get-Content -Raw -LiteralPath (Join-Path $root 'suporte.ps1')
+    Assert ($bootstrap.Contains('.update-in-progress')) 'Bootstrap deve preservar a pasta durante atualizacao.'
     Write-Host 'PASS: menus, roteamento misto, rede, Office e impressoras verificados sem alterar o Windows.'
 } finally { $form.Dispose() }
