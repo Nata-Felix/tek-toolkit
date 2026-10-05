@@ -11,6 +11,8 @@ using System.Text;
 using System.Web.Script.Serialization;
 using System.Threading;
 using System.Windows.Forms;
+using System.Globalization;
+using TekSoftwareUi;
 
 [assembly: AssemblyVersion("1.1.0.0")]
 [assembly: AssemblyFileVersion("1.1.0.0")]
@@ -65,8 +67,6 @@ namespace TekSoftwareSuporte
         private readonly FlowLayoutPanel actionsPanel = new FlowLayoutPanel();
         private readonly Panel progressCard = new Panel();
         private readonly Panel footerPanel = new Panel();
-        private readonly List<CollapsibleSection> actionSections = new List<CollapsibleSection>();
-        private CollapsibleSection activeActionSection;
 
         private const string AppVersion = "1.1.0";
         private const string LatestReleaseApiUrl = "https://api.github.com/repos/" + Repo + "/releases/tags/" + Version;
@@ -85,6 +85,18 @@ namespace TekSoftwareSuporte
         private ActionOption licenseOfficeActionOption;
         private ActionOption removeDriversActionOption;
         private volatile bool updateCheckFinished;
+
+
+        private const bool PreviewBuild = true;
+        private readonly SearchBox searchBox = new SearchBox();
+        private readonly CompactTabs categoryTabs = new CompactTabs();
+        private readonly Label emptySearchLabel = new Label();
+        private readonly LinkLabel logLink = new LinkLabel();
+        private readonly Dictionary<string, FlowLayoutPanel> categoryPanels = new Dictionary<string, FlowLayoutPanel>();
+        private readonly Dictionary<string, string> actionCategories = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> actionSearchText = new Dictionary<string, string>();
+        private string activeCategory;
+        private bool rebuildingTools;
 
         private BackgroundWorker worker;
         private Process runningProcess;
@@ -106,9 +118,11 @@ namespace TekSoftwareSuporte
 
         public SupportForm()
         {
-            Text = "Suporte TekSoftware";
-            ClientSize = new Size(1040, 700);
-            MinimumSize = new Size(640, 480);
+            AutoScaleDimensions = new SizeF(96F, 96F);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            Text = "TEK Toolkit — Prévia";
+            ClientSize = new Size(800, 600);
+            MinimumSize = new Size(740, 560);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -128,139 +142,67 @@ namespace TekSoftwareSuporte
             toolTip.AutoPopDelay = 12000;
             toolTip.InitialDelay = 350;
             toolTip.ReshowDelay = 100;
-            Shown += delegate { BeginUpdateCheck(); };
+            KeyPreview = true;
+            KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (e.Control && e.KeyCode == Keys.K) { searchBox.Focus(); searchBox.SelectAll(); e.SuppressKeyPress = true; }
+                if (e.KeyCode == Keys.Escape && searchBox.TextLength > 0) { searchBox.Clear(); e.SuppressKeyPress = true; }
+            };
+            if (!PreviewBuild) Shown += delegate { BeginUpdateCheck(); };
         }
 
         private void BuildLayout()
         {
             rootPanel.Dock = DockStyle.Fill;
             rootPanel.BackColor = Color.White;
-            rootPanel.AutoScroll = true;
+            rootPanel.AutoScroll = false;
             Controls.Add(rootPanel);
-
             BuildHeader(rootPanel);
             BuildContent(rootPanel);
             BuildFooter(rootPanel);
+            CompactTheme.Apply(this);
         }
 
         private void BuildHeader(Control root)
         {
-            headerPanel.Left = 24;
-            headerPanel.Top = 8;
-            headerPanel.Width = 992;
-            headerPanel.Height = 112;
             headerPanel.BackColor = Color.White;
             root.Controls.Add(headerPanel);
-
-            Image logo = LoadEmbeddedImage("TekFarmaLogo");
-            if (logo != null)
-            {
-                logoBox.Image = logo;
-                logoBox.SizeMode = PictureBoxSizeMode.Zoom;
-            }
-
-            logoBox.Left = 20;
-            logoBox.Top = 8;
-            logoBox.Width = 220;
-            logoBox.Height = 88;
-            headerPanel.Controls.Add(logoBox);
-
-            Panel divider = new Panel();
-            divider.Left = 270;
-            divider.Top = 14;
-            divider.Width = 1;
-            divider.Height = 76;
-            divider.BackColor = border;
-            headerPanel.Controls.Add(divider);
-
-            Label title = new Label();
-            title.Text = "Suporte TekSoftware";
-            title.Left = 300;
-            title.Top = 20;
-            title.Width = 650;
-            title.Height = 38;
-            title.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            title.Font = new Font("Segoe UI", 19F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            headerPanel.Controls.Add(title);
-
-            Label subtitle = new Label();
-            subtitle.Text = "Ferramentas de suporte e manutencao";
-            subtitle.Left = 304;
-            subtitle.Top = 62;
-            subtitle.Width = 646;
-            subtitle.Height = 28;
-            subtitle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            subtitle.Font = new Font("Segoe UI", 12F, FontStyle.Regular, GraphicsUnit.Point);
-            subtitle.ForeColor = textMuted;
-            headerPanel.Controls.Add(subtitle);
-
-            Panel horizontal = new Panel();
-            horizontal.Left = 0;
-            horizontal.Top = 104;
-            horizontal.Width = 992;
-            horizontal.Height = 1;
-            horizontal.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
-            horizontal.BackColor = border;
-            headerPanel.Controls.Add(horizontal);
+            selectLabel.Text = "Central de suporte";
+            selectLabel.Font = new Font("Segoe UI", 18F, FontStyle.Bold);
+            selectLabel.ForeColor = CompactTheme.Ink;
+            selectLabel.AutoEllipsis = true;
+            headerPanel.Controls.Add(selectLabel);
+            searchBox.CueText = "Buscar ferramenta  ·  Ctrl+K";
+            searchBox.AccessibleName = "Buscar ferramenta em todas as categorias";
+            searchBox.TabIndex = 0;
+            searchBox.TextChanged += delegate { FilterTools(); };
+            headerPanel.Controls.Add(searchBox);
         }
 
         private void BuildContent(Control root)
         {
-            selectLabel.Text = "Solucoes disponiveis";
-            selectLabel.Left = 26;
-            selectLabel.Top = 130;
-            selectLabel.Width = 440;
-            selectLabel.Height = 24;
-            selectLabel.Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold, GraphicsUnit.Point);
-            selectLabel.ForeColor = darkBlue;
-            root.Controls.Add(selectLabel);
-
-            actionsPanel.Left = 24;
-            actionsPanel.Top = 158;
-            actionsPanel.Width = 440;
-            actionsPanel.Height = 460;
-            actionsPanel.AutoScroll = true;
+            root.Controls.Add(categoryTabs);
+            categoryTabs.AccessibleName = "Categorias de ferramentas";
             actionsPanel.FlowDirection = FlowDirection.TopDown;
             actionsPanel.WrapContents = false;
-            actionsPanel.Padding = new Padding(7);
+            actionsPanel.AutoScroll = true;
+            actionsPanel.Padding = new Padding(8);
             actionsPanel.BackColor = Color.White;
-            actionsPanel.BorderStyle = BorderStyle.None;
+            actionsPanel.Visible = false;
             actionsPanel.Resize += delegate { ResizeActionSections(); };
-            actionsPanel.Paint += delegate(object sender, PaintEventArgs e)
-            {
-                using (Pen p = new Pen(border))
-                {
-                    e.Graphics.DrawRectangle(p, 0, 0, actionsPanel.Width - 1, actionsPanel.Height - 1);
-                }
-            };
+            emptySearchLabel.Text = "Nenhuma ferramenta encontrada.";
+            emptySearchLabel.AutoSize = false;
+            emptySearchLabel.Height = 44;
+            emptySearchLabel.ForeColor = CompactTheme.Muted;
+            emptySearchLabel.TextAlign = ContentAlignment.MiddleLeft;
+            actionsPanel.Controls.Add(emptySearchLabel);
             root.Controls.Add(actionsPanel);
-
             int y = 8;
-            CollapsibleSection commandSection = AddSection(actionsPanel, "Acesso rapido", SectionIconKind.Command, ref y);
-            ActionOption adminCommandAction = AddAction(
-                actionsPanel,
-                "admcomando",
-                "ADM de comando",
-                "Abre uma caixa de comandos elevada com pesquisa e sugestoes do Windows.",
-                ref y);
-            adminCommandAction.CheckBox.CheckedChanged += delegate
-            {
-                if (!adminCommandAction.CheckBox.Checked)
-                {
-                    return;
-                }
-
-                adminCommandAction.CheckBox.Checked = false;
-                ShowAdminCommandDialog();
-            };
-            commandSection.SetExpanded(true);
-
             AddSection(actionsPanel, "Rede e acesso", SectionIconKind.Network, ref y);
             networkConfigurationActionOption = AddAction(
                 actionsPanel,
                 "configuracaorede",
-                "Configurar rede avancada",
+                "Configurar IP e DNS",
                 "Seleciona o adaptador e permite configurar DHCP, IP fixo, DNS, TLS e reparos de conectividade.",
                 ref y);
             networkConfigurationActionOption.CheckBox.CheckedChanged += delegate
@@ -344,9 +286,9 @@ namespace TekSoftwareSuporte
                     }
                 }
             };
-            AddAction(actionsPanel, "impressorapdf", "Instalar impressora PDF", "Ativa o recurso nativo Microsoft Print to PDF e recria a impressora quando necessario.", ref y);
-            AddAction(actionsPanel, "insertregistroimpressora", "Insert no registro", "Insere as correcoes de registro para os erros 0x0000011b, 0x000003e3 e 0x0000007c.", ref y);
-            removeDriversActionOption = AddAction(actionsPanel, "removerdrivers", "Remover Drivers", "Seleciona e remove impressoras e drivers instalados sem exigir uma nova instalacao.", ref y);
+            AddAction(actionsPanel, "impressorapdf", "Microsoft Print to PDF", "Ativa o recurso nativo Microsoft Print to PDF e recria a impressora quando necessario.", ref y);
+            AddAction(actionsPanel, "insertregistroimpressora", "Corrigir erros de impressão", "Insere as correcoes de registro para os erros 0x0000011b, 0x000003e3 e 0x0000007c.", ref y);
+            removeDriversActionOption = AddAction(actionsPanel, "removerdrivers", "Remover impressoras e drivers", "Seleciona e remove impressoras e drivers instalados sem exigir uma nova instalacao.", ref y);
             removeDriversActionOption.CheckBox.CheckedChanged += delegate
             {
                 if (removeDriversActionOption.CheckBox.Checked && !SelectPrinterRemovalItems())
@@ -368,51 +310,96 @@ namespace TekSoftwareSuporte
             AddAction(actionsPanel, "resetimpressora", "Resetar impressora", "Para o spooler, limpa a fila de impressao e inicia o spooler novamente.", ref y);
             AddAction(actionsPanel, "gpedit", "Instalar GPEDIT.MSC", "Instala os pacotes GroupPolicy ClientTools e ClientExtensions via DISM.", ref y);
 
+
+            AddSection(actionsPanel, "Acesso rapido", SectionIconKind.Command, ref y);
+            ActionOption adminCommandAction = AddAction(
+                actionsPanel,
+                "admcomando",
+                "ADM de comando",
+                "Abre uma caixa de comandos elevada com pesquisa e sugestoes do Windows.",
+                ref y);
+            adminCommandAction.CheckBox.CheckedChanged += delegate
+            {
+                if (!adminCommandAction.CheckBox.Checked)
+                {
+                    return;
+                }
+
+                adminCommandAction.CheckBox.Checked = false;
+                ShowAdminCommandDialog();
+            };
+
+
+            // Categorias em ordem de uso, independentemente da ordem do backend.
+            string[] order = new string[] { "Windows", "Rede", "Impressoras", "Aplicativos", "Servidor", "Certificados", "Office" };
+            List<TabPage> pages = new List<TabPage>();
+            foreach (string category in order)
+                foreach (TabPage page in categoryTabs.TabPages)
+                    if (page.Text == category) pages.Add(page);
+            categoryTabs.TabPages.Clear();
+            categoryTabs.TabPages.AddRange(pages.ToArray());
             BuildProgressPanel(root);
         }
 
-        private CollapsibleSection AddSection(Panel parent, string text, SectionIconKind iconKind, ref int y)
+        private void AddSection(Panel parent, string text, SectionIconKind iconKind, ref int y)
         {
-            CollapsibleSection section = new CollapsibleSection(text, iconKind, blue, border);
-            section.Width = Math.Max(280, actionsPanel.ClientSize.Width - 16);
-            section.ExpandedChanged += delegate { actionsPanel.PerformLayout(); };
-            actionsPanel.Controls.Add(section);
-            actionSections.Add(section);
-            activeActionSection = section;
+            activeCategory = text == "Autonomia Windows" || text == "Acesso rapido" ? "Windows" :
+                text == "Rede e acesso" ? "Rede" :
+                text == "Softwares" ? "Aplicativos" :
+                text == "Licencas e Office" ? "Office" : text;
+            if (!categoryPanels.ContainsKey(activeCategory))
+            {
+                TabPage page = new TabPage(activeCategory);
+                page.BackColor = Color.White;
+                FlowLayoutPanel panel = new FlowLayoutPanel();
+                panel.Dock = DockStyle.Fill;
+                panel.AutoScroll = true;
+                panel.FlowDirection = FlowDirection.TopDown;
+                panel.WrapContents = false;
+                panel.Padding = new Padding(10, 8, 10, 8);
+                panel.BackColor = Color.White;
+                panel.Resize += delegate { ResizeActionSections(); };
+                page.Controls.Add(panel);
+                categoryPanels.Add(activeCategory, panel);
+                categoryTabs.TabPages.Add(page);
+            }
             y = 0;
-            return activeActionSection;
         }
 
         private ActionOption AddAction(Panel parent, string id, string title, string tooltip, ref int y)
         {
             CheckBox checkBox = new CheckBox();
             checkBox.Text = title;
-            checkBox.Left = 12;
-            checkBox.Top = 0;
-            checkBox.Width = 380;
-            checkBox.Height = 28;
-            checkBox.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            checkBox.ForeColor = Color.FromArgb(28, 36, 48);
-            if (activeActionSection == null)
-            {
-                throw new InvalidOperationException("Uma secao deve ser criada antes das acoes.");
-            }
-            activeActionSection.AddOption(checkBox);
+            checkBox.Height = 32;
+            checkBox.Width = 700;
+            checkBox.Margin = new Padding(0, 0, 0, 1);
+            checkBox.Padding = new Padding(10, 0, 10, 0);
+            checkBox.Font = new Font("Segoe UI", 10F);
+            checkBox.ForeColor = CompactTheme.Ink;
+            checkBox.AutoEllipsis = true;
+            checkBox.AccessibleName = title;
+            string category = id == "resetimpressora" ? "Impressoras" :
+                id == "removersenhacompartilhamento" || id == "firewalloff" ? "Rede" : activeCategory;
+            categoryPanels[category].Controls.Add(checkBox);
             toolTip.SetToolTip(checkBox, tooltip);
             ActionOption option = new ActionOption(id, title, checkBox);
             actionOptions.Add(option);
+            actionCategories.Add(id, category);
+            actionSearchText.Add(id, title + " " + tooltip + " " + category);
+            checkBox.CheckedChanged += delegate
+            {
+                checkBox.BackColor = checkBox.Checked ? CompactTheme.Selection : Color.White;
+                UpdateSelectionSummary();
+            };
             y = 0;
             return option;
         }
 
         private void ResizeActionSections()
         {
-            int width = Math.Max(280, actionsPanel.ClientSize.Width - actionsPanel.Padding.Horizontal - 12);
-
-            for (int i = 0; i < actionSections.Count; i++)
-            {
-                actionSections[i].Width = width;
-            }
+            if (rebuildingTools) return;
+            foreach (FlowLayoutPanel panel in categoryPanels.Values) ResizeToolRows(panel);
+            ResizeToolRows(actionsPanel);
         }
 
         private Panel ConfigureCard(Panel card, Control root, int left, int top, int width, int height)
@@ -429,251 +416,93 @@ namespace TekSoftwareSuporte
 
         private void BuildProgressPanel(Control root)
         {
-            Panel card = ConfigureCard(progressCard, root, 482, 158, 534, 312);
-
-            Label progressTitle = new Label();
-            progressTitle.Text = "Progresso da execucao";
-            progressTitle.Left = 18;
-            progressTitle.Top = 14;
-            progressTitle.Width = 360;
-            progressTitle.Height = 24;
-            progressTitle.Font = new Font("Segoe UI", 11F, FontStyle.Bold, GraphicsUnit.Point);
-            progressTitle.ForeColor = blue;
-            card.Controls.Add(progressTitle);
-
-            progressBar.Left = 18;
-            progressBar.Top = 52;
-            progressBar.Width = 410;
-            progressBar.Height = 28;
-            progressBar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            progressCard.BackColor = Color.White;
+            root.Controls.Add(progressCard);
+            statusLabel.Text = "Pronto para executar";
+            statusLabel.Font = new Font("Segoe UI", 9.5F);
+            statusLabel.ForeColor = CompactTheme.Ink;
+            progressCard.Controls.Add(statusLabel);
+            progressLabel.Text = "0%";
+            progressLabel.TextAlign = ContentAlignment.MiddleRight;
+            progressCard.Controls.Add(progressLabel);
             progressBar.Minimum = 0;
             progressBar.Maximum = 100;
-            card.Controls.Add(progressBar);
-
-            progressLabel.Text = "0% concluido";
-            progressLabel.Left = 446;
-            progressLabel.Top = 55;
-            progressLabel.Width = 90;
-            progressLabel.Height = 24;
-            progressLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            progressLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            progressLabel.ForeColor = blue;
-            card.Controls.Add(progressLabel);
-
-            GearPanel gear = new GearPanel();
-            gear.Left = 18;
-            gear.Top = 96;
-            gear.Width = 34;
-            gear.Height = 34;
-            gear.ForeColor = Color.FromArgb(24, 118, 224);
-            card.Controls.Add(gear);
-
-            currentStepLabel.Text = "Aguardando inicio do suporte";
-            currentStepLabel.Left = 60;
-            currentStepLabel.Top = 100;
-            currentStepLabel.Width = 470;
-            currentStepLabel.Height = 28;
-            currentStepLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            currentStepLabel.Font = new Font("Segoe UI", 11F, FontStyle.Bold, GraphicsUnit.Point);
-            currentStepLabel.ForeColor = Color.FromArgb(35, 43, 55);
-            card.Controls.Add(currentStepLabel);
-
-            Panel separator = new Panel();
-            separator.Left = 18;
-            separator.Top = 144;
-            separator.Width = 518;
-            separator.Height = 1;
-            separator.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            separator.BackColor = border;
-            card.Controls.Add(separator);
-
-            Label logTitle = new Label();
-            logTitle.Text = "Log de execucao (PowerShell)";
-            logTitle.Left = 18;
-            logTitle.Top = 154;
-            logTitle.Width = 360;
-            logTitle.Height = 24;
-            logTitle.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            logTitle.ForeColor = blue;
-            card.Controls.Add(logTitle);
-
-            logBox.Left = 18;
-            logBox.Top = 182;
-            logBox.Width = 518;
-            logBox.Height = 108;
-            logBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            progressCard.Controls.Add(progressBar);
+            currentStepLabel.Text = "Selecione as ferramentas e clique em Executar.";
+            currentStepLabel.BackColor = CompactTheme.Surface;
+            currentStepLabel.ForeColor = CompactTheme.Muted;
+            currentStepLabel.Padding = new Padding(10, 6, 10, 4);
+            currentStepLabel.AutoEllipsis = true;
+            progressCard.Controls.Add(currentStepLabel);
+            logLink.Text = "Ver log";
+            logLink.LinkColor = CompactTheme.Blue;
+            logLink.ActiveLinkColor = CompactTheme.Blue;
+            logLink.LinkBehavior = LinkBehavior.HoverUnderline;
+            logLink.TextAlign = ContentAlignment.MiddleRight;
+            logLink.LinkClicked += delegate
+            {
+                using (ExecutionLogDialog dialog = new ExecutionLogDialog(delegate { return logBox.Text; }))
+                    dialog.ShowDialog(this);
+            };
+            progressCard.Controls.Add(logLink);
+            // O armazenamento e arquivo de log permanecem ativos, sem console grande na janela principal.
             logBox.Multiline = true;
-            logBox.ReadOnly = true;
-            logBox.ScrollBars = ScrollBars.Vertical;
-            logBox.Font = new Font("Consolas", 9.75F, FontStyle.Regular, GraphicsUnit.Point);
-            logBox.BackColor = Color.White;
-            logBox.ForeColor = Color.FromArgb(24, 30, 38);
-            logBox.BorderStyle = BorderStyle.FixedSingle;
-            card.Controls.Add(logBox);
+            logBox.Visible = false;
+            progressCard.Controls.Add(logBox);
         }
 
         private void BuildFooter(Control root)
         {
-            Panel line = new Panel();
-            line.Left = 0;
-            line.Top = 0;
-            line.Width = 1040;
-            line.Height = 1;
-            line.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            line.BackColor = border;
-            footerPanel.Controls.Add(line);
-
-            footerPanel.Left = 0;
-            footerPanel.Top = 638;
-            footerPanel.Width = 1040;
-            footerPanel.Height = 62;
             footerPanel.BackColor = Color.White;
             root.Controls.Add(footerPanel);
-
-            statusLabel.Text = "Pronto para executar";
-            statusLabel.Left = 62;
-            statusLabel.Top = 22;
-            statusLabel.Width = 300;
-            statusLabel.Height = 24;
-            statusLabel.ForeColor = Color.FromArgb(38, 48, 64);
-            statusLabel.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            footerPanel.Controls.Add(statusLabel);
-
-            InfoCircle info = new InfoCircle();
-            info.Left = 40;
-            info.Top = 20;
-            info.Width = 18;
-            info.Height = 18;
-            info.ForeColor = blue;
-            footerPanel.Controls.Add(info);
-
             closeWhenDoneCheckBox.Text = "Fechar ao concluir";
-            closeWhenDoneCheckBox.Left = 420;
-            closeWhenDoneCheckBox.Top = 18;
-            closeWhenDoneCheckBox.Width = 160;
-            closeWhenDoneCheckBox.Height = 24;
             closeWhenDoneCheckBox.Checked = false;
-            closeWhenDoneCheckBox.ForeColor = Color.FromArgb(38, 48, 64);
-            closeWhenDoneCheckBox.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
             footerPanel.Controls.Add(closeWhenDoneCheckBox);
-
             executeButton.Text = "Executar";
-            executeButton.Left = 720;
-            executeButton.Top = 10;
-            executeButton.Width = 130;
-            executeButton.Height = 40;
-            executeButton.FlatStyle = FlatStyle.Flat;
-            executeButton.FlatAppearance.BorderColor = Color.FromArgb(0, 76, 170);
-            executeButton.BackColor = Color.FromArgb(0, 104, 210);
+            executeButton.BackColor = CompactTheme.Blue;
             executeButton.ForeColor = Color.White;
-            executeButton.Font = new Font("Segoe UI", 12F, FontStyle.Bold, GraphicsUnit.Point);
             executeButton.Click += delegate { StartSupport(); };
             footerPanel.Controls.Add(executeButton);
-
             cancelButton.Text = "Cancelar";
-            cancelButton.Left = 888;
-            cancelButton.Top = 10;
-            cancelButton.Width = 108;
-            cancelButton.Height = 40;
-            cancelButton.FlatStyle = FlatStyle.Flat;
-            cancelButton.FlatAppearance.BorderColor = border;
-            cancelButton.BackColor = Color.White;
             cancelButton.Enabled = false;
+            cancelButton.Visible = false;
             cancelButton.Click += delegate { CancelSupport(); };
             footerPanel.Controls.Add(cancelButton);
-
             closeButton.Text = "Fechar";
-            closeButton.Left = 1028;
-            closeButton.Top = 10;
-            closeButton.Width = 88;
-            closeButton.Height = 40;
-            closeButton.FlatStyle = FlatStyle.Flat;
-            closeButton.FlatAppearance.BorderColor = border;
-            closeButton.BackColor = Color.FromArgb(244, 246, 249);
-            closeButton.Enabled = true;
             closeButton.Click += delegate { Close(); };
             footerPanel.Controls.Add(closeButton);
         }
 
         private void ApplyResponsiveLayout()
         {
-            if (rootPanel.ClientSize.Width <= 0 || rootPanel.ClientSize.Height <= 0)
-            {
-                return;
-            }
-
-            int viewportWidth = Math.Max(600, rootPanel.ClientSize.Width);
-            int viewportHeight = Math.Max(440, rootPanel.ClientSize.Height);
-            int margin = 24;
-            int gap = 16;
-            bool compact = viewportWidth < 900;
-
-            headerPanel.Left = margin;
-            headerPanel.Top = 8;
-            headerPanel.Width = viewportWidth - (margin * 2);
-            headerPanel.Height = 112;
-
-            selectLabel.Left = margin + 2;
-            selectLabel.Top = 130;
-            selectLabel.Width = viewportWidth - (margin * 2);
-
-            int contentTop = 158;
-            int footerTop;
-            int footerHeight;
-
-            if (!compact)
-            {
-                footerHeight = 62;
-                int contentHeight = Math.Max(430, viewportHeight - contentTop - footerHeight);
-                int availableWidth = viewportWidth - (margin * 2);
-                int leftWidth = Math.Max(350, (availableWidth - gap) * 44 / 100);
-                int rightLeft = margin + leftWidth + gap;
-                int rightWidth = availableWidth - leftWidth - gap;
-
-                actionsPanel.SetBounds(margin, contentTop, leftWidth, contentHeight - 10);
-                progressCard.SetBounds(rightLeft, contentTop, rightWidth, contentHeight - 10);
-
-                footerTop = contentTop + contentHeight;
-            }
-            else
-            {
-                footerHeight = 100;
-                int contentWidth = viewportWidth - (margin * 2);
-                int y = contentTop;
-
-                actionsPanel.SetBounds(margin, y, contentWidth, 300);
-                y += actionsPanel.Height + gap;
-                progressCard.SetBounds(margin, y, contentWidth, 300);
-                y += progressCard.Height + gap;
-                footerTop = y;
-            }
-
-            LayoutFooter(viewportWidth, footerTop, footerHeight, compact);
-            rootPanel.AutoScrollMinSize = new Size(0, footerTop + footerHeight);
+            if (rootPanel.ClientSize.Width <= 0 || rootPanel.ClientSize.Height <= 0) return;
+            int width = rootPanel.ClientSize.Width;
+            int height = rootPanel.ClientSize.Height;
+            int margin = 20;
+            headerPanel.SetBounds(margin, 14, width - margin * 2, 42);
+            selectLabel.SetBounds(0, 4, headerPanel.Width - 265, 34);
+            searchBox.SetBounds(headerPanel.Width - 248, 8, 248, 27);
+            int footerTop = height - 56;
+            int progressTop = footerTop - 100;
+            categoryTabs.SetBounds(margin, 70, width - margin * 2, Math.Max(180, progressTop - 80));
+            actionsPanel.SetBounds(categoryTabs.Left, categoryTabs.Top, categoryTabs.Width, categoryTabs.Height);
+            progressCard.SetBounds(margin, progressTop, width - margin * 2, 92);
+            statusLabel.SetBounds(0, 0, progressCard.Width - 60, 22);
+            progressLabel.SetBounds(progressCard.Width - 55, 0, 55, 22);
+            progressBar.SetBounds(0, 27, progressCard.Width, 8);
+            currentStepLabel.SetBounds(0, 45, progressCard.Width - 72, 36);
+            logLink.SetBounds(progressCard.Width - 68, 50, 68, 26);
+            LayoutFooter(width, footerTop, 56, true);
             ResizeActionSections();
         }
 
         private void LayoutFooter(int width, int top, int height, bool compact)
         {
-            footerPanel.SetBounds(0, top, width, height);
-
-            if (compact)
-            {
-                statusLabel.SetBounds(62, 16, 240, 24);
-                closeWhenDoneCheckBox.SetBounds(Math.Max(320, width - 188), 14, 160, 24);
-
-                closeButton.SetBounds(width - 112, 50, 88, 40);
-                cancelButton.SetBounds(closeButton.Left - 120, 50, 108, 40);
-                executeButton.SetBounds(cancelButton.Left - 142, 50, 130, 40);
-            }
-            else
-            {
-                statusLabel.SetBounds(62, 22, 250, 24);
-                closeButton.SetBounds(width - 112, 10, 88, 40);
-                cancelButton.SetBounds(closeButton.Left - 120, 10, 108, 40);
-                executeButton.SetBounds(cancelButton.Left - 142, 10, 130, 40);
-                closeWhenDoneCheckBox.SetBounds(Math.Max(320, executeButton.Left - 180), 18, 160, 24);
-            }
+            footerPanel.SetBounds(20, top, width - 40, height);
+            closeWhenDoneCheckBox.SetBounds(0, 10, 165, 30);
+            executeButton.SetBounds(footerPanel.Width - 124, 7, 124, 34);
+            closeButton.SetBounds(executeButton.Left - 100, 7, 90, 34);
+            cancelButton.SetBounds(closeButton.Left, closeButton.Top, closeButton.Width, closeButton.Height);
         }
 
         private bool ShowMappingHostDialog()
@@ -1401,11 +1230,9 @@ namespace TekSoftwareSuporte
 
         private void SetProgress(int value)
         {
-            if (value < progressBar.Minimum) value = progressBar.Minimum;
-            if (value > progressBar.Maximum) value = progressBar.Maximum;
-
+            value = Math.Max(progressBar.Minimum, Math.Min(progressBar.Maximum, value));
             progressBar.Value = value;
-            progressLabel.Text = value + "% concluido";
+            progressLabel.Text = value + "%";
         }
 
         private void AppendLog(string text)
@@ -1415,14 +1242,14 @@ namespace TekSoftwareSuporte
 
         private void AppendLog(string text, bool writeFile)
         {
-            if (logBox.InvokeRequired)
+            if (InvokeRequired)
             {
                 if (writeFile)
                 {
                     WriteGuiLogFile(text);
                 }
 
-                logBox.BeginInvoke(new Action<string, bool>(AppendLog), text, false);
+                BeginInvoke(new Action<string, bool>(AppendLog), text, false);
                 return;
             }
 
@@ -1456,12 +1283,12 @@ namespace TekSoftwareSuporte
 
         private void SetInputsEnabled(bool enabled)
         {
-            for (int i = 0; i < actionOptions.Count; i++)
-            {
-                actionOptions[i].CheckBox.Enabled = enabled;
-            }
-
+            foreach (ActionOption option in actionOptions) option.CheckBox.Enabled = enabled;
             closeWhenDoneCheckBox.Enabled = enabled;
+            cancelButton.Visible = !enabled;
+            closeButton.Visible = enabled;
+            searchBox.Enabled = enabled;
+            if (enabled) UpdateSelectionSummary();
         }
 
         private Image LoadEmbeddedImage(string name)
@@ -2865,128 +2692,58 @@ namespace TekSoftwareSuporte
             bitmap.Dispose();
             return trimmed;
         }
+    
+        private void ResizeToolRows(FlowLayoutPanel panel)
+        {
+            int width = Math.Max(240, panel.ClientSize.Width - panel.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 2);
+            foreach (Control control in panel.Controls) control.Width = width;
+        }
+
+        private void FilterTools()
+        {
+            if (rebuildingTools) return;
+            rebuildingTools = true;
+            try
+            {
+                string query = searchBox.Text.Trim();
+                bool searching = query.Length > 0;
+                categoryTabs.Visible = !searching;
+                actionsPanel.Visible = searching;
+                int matches = 0;
+                Dictionary<FlowLayoutPanel, int> rowIndexes = new Dictionary<FlowLayoutPanel, int>();
+                actionsPanel.SuspendLayout();
+                foreach (FlowLayoutPanel panel in categoryPanels.Values) panel.SuspendLayout();
+                foreach (ActionOption option in actionOptions)
+                {
+                    bool match = CultureInfo.GetCultureInfo("pt-BR").CompareInfo.IndexOf(
+                        actionSearchText[option.Id], query, CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace) >= 0;
+                    FlowLayoutPanel destination = searching && match ? actionsPanel : categoryPanels[actionCategories[option.Id]];
+                    if (option.CheckBox.Parent != destination) destination.Controls.Add(option.CheckBox);
+                    int rowIndex;
+                    if (!rowIndexes.TryGetValue(destination, out rowIndex)) rowIndex = destination == actionsPanel ? 1 : 0;
+                    destination.Controls.SetChildIndex(option.CheckBox, rowIndex);
+                    rowIndexes[destination] = rowIndex + 1;
+                    option.CheckBox.Visible = !searching || match;
+                    if (match) matches++;
+                }
+                emptySearchLabel.Visible = searching && matches == 0;
+                foreach (FlowLayoutPanel panel in categoryPanels.Values) panel.ResumeLayout(true);
+                actionsPanel.ResumeLayout(true);
+            }
+            finally { rebuildingTools = false; }
+            ResizeActionSections();
+        }
+
+        private void UpdateSelectionSummary()
+        {
+            int count = 0;
+            foreach (ActionOption option in actionOptions) if (option.CheckBox.Checked) count++;
+            executeButton.Text = count > 0 ? "Executar (" + count + ")" : "Executar";
+        }
+
     }
 
-    internal sealed class CollapsibleSection : Panel
-    {
-        private const int HeaderHeight = 36;
-        private readonly Panel header = new Panel();
-        private readonly Panel content = new Panel();
-        private readonly Label titleLabel = new Label();
-        private readonly Label indicatorLabel = new Label();
-        private int optionCount;
-        private bool expanded;
 
-        public event EventHandler ExpandedChanged;
-
-        public CollapsibleSection(string title, SectionIconKind iconKind, Color accent, Color borderColor)
-        {
-            Height = HeaderHeight;
-            Margin = new Padding(4, 3, 4, 1);
-            BackColor = Color.White;
-            BorderStyle = BorderStyle.FixedSingle;
-
-            header.Dock = DockStyle.Top;
-            header.Height = HeaderHeight;
-            header.BackColor = Color.FromArgb(246, 249, 253);
-            header.Cursor = Cursors.Hand;
-            Controls.Add(header);
-
-            SectionIcon icon = new SectionIcon(iconKind);
-            icon.Left = 12;
-            icon.Top = 8;
-            icon.Width = 18;
-            icon.Height = 18;
-            icon.ForeColor = accent;
-            icon.Cursor = Cursors.Hand;
-            header.Controls.Add(icon);
-
-            titleLabel.Text = title;
-            titleLabel.Left = 40;
-            titleLabel.Top = 7;
-            titleLabel.Width = 250;
-            titleLabel.Height = 22;
-            titleLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            titleLabel.ForeColor = accent;
-            titleLabel.Cursor = Cursors.Hand;
-            titleLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            header.Controls.Add(titleLabel);
-
-            indicatorLabel.Text = ">";
-            indicatorLabel.TextAlign = ContentAlignment.MiddleCenter;
-            indicatorLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            indicatorLabel.ForeColor = accent;
-            indicatorLabel.Width = 28;
-            indicatorLabel.Height = HeaderHeight - 2;
-            indicatorLabel.Left = Width - 32;
-            indicatorLabel.Top = 0;
-            indicatorLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            indicatorLabel.Cursor = Cursors.Hand;
-            header.Controls.Add(indicatorLabel);
-
-            content.Left = 0;
-            content.Top = HeaderHeight;
-            content.Width = Math.Max(1, ClientSize.Width);
-            content.Height = 0;
-            content.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            content.BackColor = Color.White;
-            content.Visible = false;
-            Controls.Add(content);
-
-            header.Click += ToggleExpanded;
-            icon.Click += ToggleExpanded;
-            titleLabel.Click += ToggleExpanded;
-            indicatorLabel.Click += ToggleExpanded;
-        }
-
-        public void AddOption(CheckBox checkBox)
-        {
-            checkBox.Left = 12;
-            checkBox.Top = 5 + (optionCount * 32);
-            checkBox.Width = Math.Max(120, ClientSize.Width - 24);
-            checkBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            content.Controls.Add(checkBox);
-            optionCount++;
-            content.Height = 10 + (optionCount * 32);
-
-            if (expanded)
-            {
-                Height = HeaderHeight + content.Height;
-            }
-        }
-
-        protected override void OnResize(EventArgs e)
-        {
-            base.OnResize(e);
-            content.Width = Math.Max(1, ClientSize.Width);
-            titleLabel.Width = Math.Max(80, ClientSize.Width - 80);
-        }
-
-        public void SetExpanded(bool value)
-        {
-            if (expanded == value) return;
-            ToggleExpanded(this, EventArgs.Empty);
-        }
-
-        private void ToggleExpanded(object sender, EventArgs e)
-        {
-            expanded = !expanded;
-            content.Visible = expanded;
-            indicatorLabel.Text = expanded ? "v" : ">";
-            Height = HeaderHeight + (expanded ? content.Height : 0);
-
-            if (Parent != null)
-            {
-                Parent.PerformLayout();
-            }
-
-            EventHandler handler = ExpandedChanged;
-            if (handler != null)
-            {
-                handler(this, EventArgs.Empty);
-            }
-        }
-    }
 
     internal sealed class ActionOption
     {
@@ -3056,7 +2813,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class MappingHostDialog : Form
+    internal sealed class MappingHostDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(0, 92, 190);
         private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
@@ -3126,6 +2883,7 @@ namespace TekSoftwareSuporte
                 hostTextBox.Focus();
                 hostTextBox.SelectAll();
             };
+            CompactTheme.Apply(this);
         }
 
         private void AddPresetButton(string text, int left)
@@ -3174,7 +2932,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class SefazTimeZoneDialog : Form
+    internal sealed class SefazTimeZoneDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(0, 92, 190);
         private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
@@ -3188,9 +2946,8 @@ namespace TekSoftwareSuporte
         public SefazTimeZoneDialog(SefazTimeZoneOption currentOption)
         {
             Text = "Selecionar UTC";
-            Width = 600;
-            Height = 360;
-            MinimumSize = new Size(600, 360);
+            ClientSize = new Size(600, 352);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -3200,6 +2957,7 @@ namespace TekSoftwareSuporte
 
             BuildLayout();
             LoadOptions(currentOption);
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
@@ -3342,7 +3100,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class ServerMigrationDialog : Form
+    internal sealed class ServerMigrationDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(0, 92, 190);
         private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
@@ -3367,9 +3125,8 @@ namespace TekSoftwareSuporte
         public ServerMigrationDialog(ServerMigrationPlan currentPlan)
         {
             Text = "Troca de servidor";
-            Width = 720;
-            Height = 570;
-            MinimumSize = new Size(720, 570);
+            ClientSize = new Size(720, 570);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -3380,6 +3137,7 @@ namespace TekSoftwareSuporte
             BuildLayout();
             LoadPlan(currentPlan);
             UpdateModeState();
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
@@ -3667,7 +3425,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class PrinterDriverDialog : Form
+    internal sealed class PrinterDriverDialog : CompactDialog
     {
         private readonly string indexUrl;
         private readonly PrinterDriver currentDriver;
@@ -3691,9 +3449,8 @@ namespace TekSoftwareSuporte
             this.currentDriver = currentDriver;
 
             Text = "Selecionar impressora";
-            Width = 760;
-            Height = 500;
-            MinimumSize = new Size(760, 500);
+            ClientSize = new Size(760, 500);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -3703,6 +3460,7 @@ namespace TekSoftwareSuporte
 
             BuildLayout();
             Load += delegate { LoadIndex(); };
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
@@ -3993,7 +3751,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class PrinterRemovalDialog : Form
+    internal sealed class PrinterRemovalDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(0, 92, 190);
         private readonly Color darkBlue = Color.FromArgb(0, 49, 112);
@@ -4014,9 +3772,8 @@ namespace TekSoftwareSuporte
             SelectedDrivers = new List<string>();
 
             Text = "Remover impressora ou driver atual";
-            Width = 820;
-            Height = 540;
-            MinimumSize = new Size(820, 540);
+            ClientSize = new Size(800, 520);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -4026,6 +3783,7 @@ namespace TekSoftwareSuporte
 
             BuildLayout();
             Load += delegate { LoadInstalledItems(); };
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
@@ -4738,7 +4496,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class UpdateAvailableDialog : Form
+    internal sealed class UpdateAvailableDialog : CompactDialog
     {
         public UpdateAvailableDialog(string currentVersion, string availableVersion, Icon applicationIcon)
         {
@@ -4799,7 +4557,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class AdminCommandDialog : Form
+    internal sealed class AdminCommandDialog : CompactDialog
     {
         private readonly Color darkBlue = Color.FromArgb(7, 45, 75);
         private readonly Color blue = Color.FromArgb(11, 67, 112);
@@ -4921,6 +4679,7 @@ namespace TekSoftwareSuporte
 
             allCommands = AdminCommandCatalog.Build();
             RefreshSuggestions();
+            CompactTheme.Apply(this);
         }
 
         private void RefreshSuggestions()
@@ -5183,88 +4942,7 @@ namespace TekSoftwareSuporte
     {
         public static Panel CreateHeader(int width, string titleText, string subtitleText)
         {
-            Color darkBlue = Color.FromArgb(7, 45, 75);
-            Color emerald = Color.FromArgb(8, 154, 103);
-            Panel header = new Panel();
-            header.SetBounds(0, 0, width, 84);
-            header.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            header.BackColor = Color.FromArgb(243, 248, 250);
-
-            Panel accent = new Panel();
-            accent.SetBounds(0, 0, 6, 84);
-            accent.BackColor = emerald;
-            header.Controls.Add(accent);
-
-            PictureBox logo = new PictureBox();
-            logo.SetBounds(18, 13, 176, 58);
-            logo.SizeMode = PictureBoxSizeMode.Zoom;
-            logo.BackColor = Color.Transparent;
-            logo.Image = LoadBrandLogo();
-            header.Controls.Add(logo);
-
-            Label title = new Label();
-            title.Text = titleText;
-            title.SetBounds(210, 14, width - 230, 30);
-            title.Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
-            header.Controls.Add(title);
-
-            Label subtitle = new Label();
-            subtitle.Text = subtitleText;
-            subtitle.SetBounds(212, 45, width - 232, 24);
-            subtitle.Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-            subtitle.ForeColor = Color.FromArgb(89, 111, 125);
-            header.Controls.Add(subtitle);
-            return header;
-        }
-
-        private static Image LoadBrandLogo()
-        {
-            try
-            {
-                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("TekFarmaLogo"))
-                {
-                    if (stream == null) return null;
-                    using (Image source = Image.FromStream(stream)) return TrimTransparentImage(new Bitmap(source));
-                }
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static Image TrimTransparentImage(Bitmap bitmap)
-        {
-            int left = bitmap.Width;
-            int top = bitmap.Height;
-            int right = -1;
-            int bottom = -1;
-            for (int y = 0; y < bitmap.Height; y += 2)
-            {
-                for (int x = 0; x < bitmap.Width; x += 2)
-                {
-                    if (bitmap.GetPixel(x, y).A <= 10) continue;
-                    if (x < left) left = x;
-                    if (x > right) right = x;
-                    if (y < top) top = y;
-                    if (y > bottom) bottom = y;
-                }
-            }
-            if (right < left || bottom < top) return bitmap;
-
-            int padding = 6;
-            left = Math.Max(0, left - padding);
-            top = Math.Max(0, top - padding);
-            right = Math.Min(bitmap.Width - 1, right + padding);
-            bottom = Math.Min(bitmap.Height - 1, bottom + padding);
-            Bitmap trimmed = new Bitmap(right - left + 1, bottom - top + 1, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (Graphics graphics = Graphics.FromImage(trimmed))
-            {
-                graphics.DrawImage(bitmap, new Rectangle(0, 0, trimmed.Width, trimmed.Height), new Rectangle(left, top, trimmed.Width, trimmed.Height), GraphicsUnit.Pixel);
-            }
-            bitmap.Dispose();
-            return trimmed;
+            return CompactTheme.Header(width, titleText, subtitleText);
         }
     }
 
@@ -5322,7 +5000,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class OfficeDownloadDialog : Form
+    internal sealed class OfficeDownloadDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(11, 67, 112);
         private readonly Color darkBlue = Color.FromArgb(7, 45, 75);
@@ -5342,8 +5020,8 @@ namespace TekSoftwareSuporte
         {
             initialPlan = currentPlan;
             Text = "Instalar Office oficial";
-            ClientSize = new Size(820, 680);
-            MinimumSize = new Size(820, 680);
+            ClientSize = new Size(760, 560);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
@@ -5353,154 +5031,86 @@ namespace TekSoftwareSuporte
 
             BuildLayout();
             LoadProducts();
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
         {
-            Controls.Add(TekDialogBrand.CreateHeader(ClientSize.Width, "Instalacao oficial do Microsoft Office", "O toolkit baixa e instala em segundo plano, sem abrir o navegador"));
-
-            Label yearLabel = new Label();
-            yearLabel.Text = "Ano / versao";
-            yearLabel.SetBounds(26, 100, 150, 22);
-            yearLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold, GraphicsUnit.Point);
-            yearLabel.ForeColor = blue;
-            Controls.Add(yearLabel);
-
-            yearComboBox.SetBounds(26, 124, 170, 30);
+            Controls.Add(CompactTheme.Header(ClientSize.Width, "Instalar Microsoft Office", "Escolha um pacote ou os aplicativos necessários."));
+            Label versionLabel = new Label();
+            versionLabel.Text = "Versão";
+            versionLabel.SetBounds(24, 86, 160, 20);
+            Controls.Add(versionLabel);
+            yearComboBox.SetBounds(24, 110, 170, 28);
             yearComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
             yearComboBox.Items.Add("Office 2019");
             yearComboBox.Items.Add("Office 2021");
             yearComboBox.SelectedIndex = initialPlan != null && initialPlan.Year == 2019 ? 0 : 1;
             yearComboBox.SelectedIndexChanged += delegate { LoadProducts(); };
             Controls.Add(yearComboBox);
-
             Label languageLabel = new Label();
-            languageLabel.Text = "Idioma da midia";
-            languageLabel.SetBounds(218, 100, 180, 22);
-            languageLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold, GraphicsUnit.Point);
-            languageLabel.ForeColor = blue;
+            languageLabel.Text = "Idioma";
+            languageLabel.SetBounds(212, 86, 220, 20);
             Controls.Add(languageLabel);
-
-            languageComboBox.SetBounds(218, 124, 236, 30);
+            languageComboBox.SetBounds(212, 110, 250, 28);
             languageComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
-            languageComboBox.Items.Add("Portugues (Brasil) - pt-BR");
-            languageComboBox.Items.Add("English (United States) - en-US");
+            languageComboBox.Items.Add("Português (Brasil)");
+            languageComboBox.Items.Add("English (United States)");
             languageComboBox.SelectedIndex = initialPlan != null && String.Equals(initialPlan.LanguageCode, "en-us", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
             languageComboBox.SelectedIndexChanged += delegate { UpdateSelectionText(); };
             Controls.Add(languageComboBox);
-
             Button completeButton = new Button();
-            completeButton.Text = "Escolher Professional Plus";
-            completeButton.SetBounds(574, 118, 220, 36);
-            StyleSecondaryButton(completeButton);
+            completeButton.Text = "Professional Plus";
+            completeButton.SetBounds(580, 108, 156, 32);
             completeButton.Click += delegate { SelectOnly("ProPlus"); };
             Controls.Add(completeButton);
-
-            Panel packagesPanel = CreateProductPanel(
-                26,
-                "PACOTES COMPLETOS",
-                "Um pacote instala um conjunto de aplicativos do Office.",
-                packageList,
-                "Para a maioria das empresas, escolha Professional Plus.",
-                blue);
-            Controls.Add(packagesPanel);
-
-            Panel applicationsPanel = CreateProductPanel(
-                424,
-                "APLICATIVOS INDIVIDUAIS",
-                "Baixe somente o aplicativo ou ferramenta necessaria.",
-                applicationList,
-                "Exemplo: marque apenas Excel para baixar somente o Excel.",
-                emerald);
-            Controls.Add(applicationsPanel);
-
-            packageList.ItemCheck += delegate
-            {
-                QueueSelectionModeUpdate();
-            };
-            applicationList.ItemCheck += delegate
-            {
-                QueueSelectionModeUpdate();
-            };
-
-            selectionLabel.SetBounds(28, 548, 760, 24);
-            selectionLabel.ForeColor = darkBlue;
-            selectionLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold, GraphicsUnit.Point);
+            Controls.Add(CreateProductPanel(24, "Pacotes completos", "", packageList, "", blue));
+            Controls.Add(CreateProductPanel(392, "Aplicativos individuais", "", applicationList, "", blue));
+            packageList.ItemCheck += delegate { QueueSelectionModeUpdate(); };
+            applicationList.ItemCheck += delegate { QueueSelectionModeUpdate(); };
+            selectionLabel.SetBounds(24, 456, 712, 22);
+            selectionLabel.AutoEllipsis = true;
             Controls.Add(selectionLabel);
-
-            Label licenseNote = new Label();
-            licenseNote.Text = "A instalacao usa a Office Deployment Tool oficial. Mantenha o toolkit aberto; a ativacao exige uma licenca valida.";
-            licenseNote.SetBounds(28, 574, 760, 34);
-            licenseNote.ForeColor = Color.FromArgb(133, 91, 24);
-            Controls.Add(licenseNote);
-
-            Button clearButton = new Button();
-            clearButton.Text = "Limpar selecao";
-            clearButton.SetBounds(424, 624, 120, 38);
-            StyleSecondaryButton(clearButton);
-            clearButton.Click += delegate { ClearSelection(); };
-            Controls.Add(clearButton);
-
-            Button cancelButton = new Button();
-            cancelButton.Text = "Cancelar";
-            cancelButton.SetBounds(554, 624, 104, 38);
-            cancelButton.DialogResult = DialogResult.Cancel;
-            StyleSecondaryButton(cancelButton);
-            Controls.Add(cancelButton);
-
-            Button confirmButton = new Button();
-            confirmButton.Text = "Baixar e instalar";
-            confirmButton.SetBounds(668, 624, 126, 38);
-            confirmButton.FlatStyle = FlatStyle.Flat;
-            confirmButton.FlatAppearance.BorderColor = emerald;
-            confirmButton.BackColor = emerald;
-            confirmButton.ForeColor = Color.White;
-            confirmButton.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold, GraphicsUnit.Point);
-            confirmButton.Click += delegate { ConfirmSelection(); };
-            Controls.Add(confirmButton);
-
-            AcceptButton = confirmButton;
-            CancelButton = cancelButton;
+            Label note = new Label();
+            note.Text = "Instalação oficial Microsoft. A ativação exige uma licença válida.";
+            note.SetBounds(24, 481, 712, 22);
+            Controls.Add(note);
+            Button clear = new Button();
+            clear.Text = "Limpar seleção";
+            clear.SetBounds(384, 514, 112, 32);
+            clear.Click += delegate { ClearSelection(); };
+            Controls.Add(clear);
+            Button cancel = new Button();
+            cancel.Text = "Cancelar";
+            cancel.SetBounds(506, 514, 100, 32);
+            cancel.DialogResult = DialogResult.Cancel;
+            Controls.Add(cancel);
+            Button confirm = new Button();
+            confirm.Text = "Selecionar";
+            confirm.SetBounds(616, 514, 120, 32);
+            confirm.BackColor = CompactTheme.Blue;
+            confirm.ForeColor = Color.White;
+            confirm.Click += delegate { ConfirmSelection(); };
+            Controls.Add(confirm);
+            AcceptButton = confirm;
+            CancelButton = cancel;
         }
 
         private Panel CreateProductPanel(int left, string titleText, string subtitleText, CheckedListBox list, string hintText, Color accentColor)
         {
             Panel panel = new Panel();
-            panel.SetBounds(left, 174, 370, 360);
+            panel.SetBounds(left, 158, 344, 282);
             panel.BackColor = Color.White;
-            panel.BorderStyle = BorderStyle.FixedSingle;
-
-            Panel accent = new Panel();
-            accent.SetBounds(0, 0, 370, 5);
-            accent.BackColor = accentColor;
-            panel.Controls.Add(accent);
-
             Label title = new Label();
             title.Text = titleText;
-            title.SetBounds(16, 16, 336, 24);
-            title.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
-            title.ForeColor = darkBlue;
+            title.SetBounds(0, 0, 344, 22);
+            title.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
             panel.Controls.Add(title);
-
-            Label subtitle = new Label();
-            subtitle.Text = subtitleText;
-            subtitle.SetBounds(16, 42, 336, 36);
-            subtitle.ForeColor = Color.FromArgb(89, 111, 125);
-            panel.Controls.Add(subtitle);
-
-            list.SetBounds(16, 84, 336, 218);
+            list.SetBounds(0, 28, 344, 254);
             list.CheckOnClick = true;
             list.IntegralHeight = false;
             list.BorderStyle = BorderStyle.FixedSingle;
-            list.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
             panel.Controls.Add(list);
-
-            Label hint = new Label();
-            hint.Text = hintText;
-            hint.SetBounds(16, 312, 336, 36);
-            hint.ForeColor = accentColor;
-            hint.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold, GraphicsUnit.Point);
-            panel.Controls.Add(hint);
             return panel;
         }
 
@@ -5716,7 +5326,7 @@ namespace TekSoftwareSuporte
         }
     }
 
-    internal sealed class LicenseOfficeDialog : Form
+    internal sealed class LicenseOfficeDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(11, 67, 112);
         private readonly Color darkBlue = Color.FromArgb(7, 45, 75);
@@ -5732,8 +5342,8 @@ namespace TekSoftwareSuporte
         public LicenseOfficeDialog(LicenseOfficeOption currentOption)
         {
             Text = "Licencas e Office";
-            ClientSize = new Size(660, 430);
-            MinimumSize = new Size(660, 430);
+            ClientSize = new Size(660, 410);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -5743,6 +5353,7 @@ namespace TekSoftwareSuporte
 
             BuildLayout();
             LoadOptions(currentOption);
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
@@ -5750,7 +5361,7 @@ namespace TekSoftwareSuporte
             Controls.Add(TekDialogBrand.CreateHeader(ClientSize.Width, "Licencas e Office", "Escolha uma acao de suporte, ativacao ou download oficial"));
 
             optionList.Left = 28;
-            optionList.Top = 104;
+            optionList.Top = 88;
             optionList.Width = 604;
             optionList.Height = 176;
             optionList.Font = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Point);
@@ -5760,7 +5371,7 @@ namespace TekSoftwareSuporte
             Controls.Add(optionList);
 
             descriptionLabel.Left = 28;
-            descriptionLabel.Top = 294;
+            descriptionLabel.Top = 278;
             descriptionLabel.Width = 604;
             descriptionLabel.Height = 56;
             descriptionLabel.Padding = new Padding(14, 10, 12, 8);
@@ -5769,14 +5380,14 @@ namespace TekSoftwareSuporte
             Controls.Add(descriptionLabel);
 
             Panel descriptionAccent = new Panel();
-            descriptionAccent.SetBounds(28, 294, 5, 56);
+            descriptionAccent.SetBounds(28, 278, 5, 56);
             descriptionAccent.BackColor = emerald;
             Controls.Add(descriptionAccent);
             descriptionAccent.BringToFront();
 
             okButton.Text = "Salvar";
             okButton.Left = 426;
-            okButton.Top = 370;
+            okButton.Top = 350;
             okButton.Width = 98;
             okButton.Height = 38;
             okButton.FlatStyle = FlatStyle.Flat;
@@ -5789,7 +5400,7 @@ namespace TekSoftwareSuporte
 
             cancelButton.Text = "Cancelar";
             cancelButton.Left = 534;
-            cancelButton.Top = 370;
+            cancelButton.Top = 350;
             cancelButton.Width = 98;
             cancelButton.Height = 38;
             cancelButton.FlatStyle = FlatStyle.Flat;
@@ -5915,7 +5526,7 @@ namespace TekSoftwareSuporte
         Inconclusive
     }
 
-    internal sealed class NetworkConfigurationDialog : Form
+    internal sealed class NetworkConfigurationDialog : CompactDialog
     {
         private readonly Color blue = Color.FromArgb(11, 67, 112);
         private readonly Color darkBlue = Color.FromArgb(7, 45, 75);
@@ -5952,8 +5563,8 @@ namespace TekSoftwareSuporte
         {
             initialPlan = currentPlan;
             Text = "Configuracao avancada de rede";
-            ClientSize = new Size(800, 680);
-            MinimumSize = new Size(800, 680);
+            ClientSize = new Size(800, 610);
+            MinimumSize = Size;
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.White;
             Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
@@ -5963,6 +5574,7 @@ namespace TekSoftwareSuporte
 
             BuildLayout();
             Shown += delegate { LoadAdapters(); };
+            CompactTheme.Apply(this);
         }
 
         private void BuildLayout()
@@ -6002,30 +5614,33 @@ namespace TekSoftwareSuporte
             adapterDetailsLabel.ForeColor = Color.FromArgb(89, 111, 125);
             Controls.Add(adapterDetailsLabel);
 
-            TabControl tabs = new TabControl();
-            tabs.SetBounds(24, 176, 748, 420);
+            CompactTabs tabs = new CompactTabs();
+            tabs.ItemSize = new Size(160, 30);
+            tabs.SetBounds(24, 176, 748, 360);
             tabs.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
             Controls.Add(tabs);
 
             TabPage ipPage = new TabPage("IPv4 e DNS");
             ipPage.BackColor = Color.White;
+            ipPage.AutoScroll = true;
             tabs.TabPages.Add(ipPage);
             BuildIpPage(ipPage);
 
             TabPage repairPage = new TabPage("Reparo e Internet");
             repairPage.BackColor = Color.White;
+            repairPage.AutoScroll = true;
             tabs.TabPages.Add(repairPage);
             BuildRepairPage(repairPage);
 
             Button cancelButton = new Button();
             cancelButton.Text = "Cancelar";
-            cancelButton.SetBounds(518, 620, 104, 38);
+            cancelButton.SetBounds(518, 562, 104, 34);
             cancelButton.DialogResult = DialogResult.Cancel;
             StyleSecondaryButton(cancelButton);
             Controls.Add(cancelButton);
 
             saveButton.Text = "Salvar configuracao";
-            saveButton.SetBounds(632, 620, 140, 38);
+            saveButton.SetBounds(632, 562, 140, 34);
             saveButton.FlatStyle = FlatStyle.Flat;
             saveButton.FlatAppearance.BorderColor = emerald;
             saveButton.BackColor = emerald;

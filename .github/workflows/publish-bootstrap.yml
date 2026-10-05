@@ -36,7 +36,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($path in @("suporte.ps1", "suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1", "tests/Test-AdditionalSupportTools.ps1")) {
+          foreach ($path in @("suporte.ps1", "suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1", "tests/Test-AdditionalSupportTools.ps1", "tests/Test-CompactUi.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -54,6 +54,14 @@ jobs:
         timeout-minutes: 5
         shell: powershell
         run: .\tests\Test-AdditionalSupportTools.ps1
+      - name: Verify compact UI and render previews
+        timeout-minutes: 5
+        shell: powershell
+        run: .\tests\Test-CompactUi.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compact-ui-previews
+          path: ui-previews/*.png
       - name: Verify updater replacement and integrity
         shell: powershell
         run: |
