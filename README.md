@@ -148,3 +148,12 @@ A central de suporte agora inclui:
 Mantém os fluxos de TekFarma, Firebird, certificados e reset regional pt-BR. Os downloads de suporte e drivers continuam vinculados às releases do TEK Toolkit.
 
 O fluxo de CI compila as três interfaces e verifica o reset regional, os planos de execução, a sintaxe dos scripts gerados e a integridade/substituição do atualizador. Os testes dos novos assistentes não instalam aplicativos nem alteram rede ou impressoras.
+
+
+## Interface compacta
+
+A interface compacta reorganiza o suporte em uma janela de 800 × 600, com abas, busca global por nome/descrição (inclusive sem acentos), seleção preservada entre categorias e acompanhamento compacto. O log continua sendo salvo e pode ser acompanhado em uma janela própria.
+
+As subjanelas usam o mesmo tema claro, tipografia Segoe UI, botões azuis e campos discretos. Os assistentes de Office e rede foram compactados; as opções e validações existentes são mantidas.
+
+A verificação de atualização permanece ativa no aplicativo publicado. Os testes de interface desativam somente essa consulta para validar as janelas de forma isolada. O CI disponibiliza binários e capturas em artefatos; a release é atualizada após integração na main.

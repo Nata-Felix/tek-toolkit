@@ -15,7 +15,8 @@ function Build-WinFormsExe {
     param(
         [string]$SourceFile,
         [string]$OutputFile,
-        [string]$ErrorMessage
+        [string]$ErrorMessage,
+        [string]$SharedUiFile = ""
     )
 
     $CompilerArguments = @(
@@ -36,6 +37,7 @@ function Build-WinFormsExe {
         $SourceFile
     )
 
+    if (![string]::IsNullOrWhiteSpace($SharedUiFile)) { $CompilerArguments += $SharedUiFile }
     & $Csc $CompilerArguments
 
     if ($LASTEXITCODE -ne 0) {
@@ -51,11 +53,13 @@ Build-WinFormsExe `
 Build-WinFormsExe `
     -SourceFile "$PSScriptRoot\TekSoftwareSuporteGui.cs" `
     -OutputFile "$RepoRoot\TekSoftwareSuporte.exe" `
-    -ErrorMessage "Falha ao compilar TekSoftwareSuporte.exe."
+    -ErrorMessage "Falha ao compilar TekSoftwareSuporte.exe." `
+    -SharedUiFile "$PSScriptRoot\CompactUi.cs"
 
 Build-WinFormsExe `
     -SourceFile "$PSScriptRoot\TekSoftwareUpdater.cs" `
     -OutputFile "$RepoRoot\TekSoftwareUpdater.exe" `
-    -ErrorMessage "Falha ao compilar TekSoftwareUpdater.exe."
+    -ErrorMessage "Falha ao compilar TekSoftwareUpdater.exe." `
+    -SharedUiFile "$PSScriptRoot\CompactUi.cs"
 
 Get-Item "$RepoRoot\TekFarmaInstaller.exe", "$RepoRoot\TekSoftwareSuporte.exe", "$RepoRoot\TekSoftwareUpdater.exe" | Select-Object FullName,Length,LastWriteTime

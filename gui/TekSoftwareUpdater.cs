@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using TekSoftwareUi;
 
 [assembly: AssemblyTitle("TekSoftwareUpdater")]
 [assembly: AssemblyProduct("TekSoftwareSuporte")]
@@ -139,7 +140,7 @@ namespace TekSoftwareUpdater
         }
     }
 
-    internal sealed class UpdaterForm : Form
+    internal sealed class UpdaterForm : CompactDialog
     {
         private readonly UpdateOptions options;
         private readonly Color darkBlue = Color.FromArgb(7, 45, 75);
@@ -179,12 +180,12 @@ namespace TekSoftwareUpdater
             Panel header = new Panel();
             header.Dock = DockStyle.Top;
             header.Height = 64;
-            header.BackColor = darkBlue;
+            header.BackColor = Color.White;
             Controls.Add(header);
 
             Label title = new Label();
             title.Text = "TekSoftwareSuporte";
-            title.ForeColor = Color.White;
+            title.ForeColor = CompactTheme.Ink;
             title.Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold);
             title.AutoSize = true;
             title.Left = 22;
@@ -193,7 +194,7 @@ namespace TekSoftwareUpdater
 
             Label version = new Label();
             version.Text = "Atualizando para " + options.Version;
-            version.ForeColor = Color.FromArgb(202, 230, 226);
+            version.ForeColor = CompactTheme.Muted;
             version.AutoSize = true;
             version.Left = 336;
             version.Top = 23;
@@ -241,6 +242,7 @@ namespace TekSoftwareUpdater
             {
                 ThreadPool.QueueUserWorkItem(delegate { RunUpdate(); });
             };
+            CompactTheme.Apply(this);
         }
 
         private void RunUpdate()
