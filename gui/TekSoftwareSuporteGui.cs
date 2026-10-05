@@ -87,8 +87,9 @@ namespace TekSoftwareSuporte
         private volatile bool updateCheckFinished;
 
 
-        private const bool PreviewBuild = true;
+        private static readonly bool PreviewBuild = true;
         private readonly SearchBox searchBox = new SearchBox();
+        private readonly Button searchButton = new Button();
         private readonly CompactTabs categoryTabs = new CompactTabs();
         private readonly Label emptySearchLabel = new Label();
         private readonly LinkLabel logLink = new LinkLabel();
@@ -177,6 +178,14 @@ namespace TekSoftwareSuporte
             searchBox.TabIndex = 0;
             searchBox.TextChanged += delegate { FilterTools(); };
             headerPanel.Controls.Add(searchBox);
+            searchButton.Text = "Buscar";
+            searchButton.AccessibleName = "Buscar ferramenta";
+            searchButton.TabIndex = 1;
+            searchButton.FlatStyle = FlatStyle.Flat;
+            searchButton.BackColor = CompactTheme.Blue;
+            searchButton.ForeColor = Color.White;
+            searchButton.Click += delegate { searchBox.Focus(); FilterTools(); };
+            headerPanel.Controls.Add(searchButton);
         }
 
         private void BuildContent(Control root)
@@ -298,7 +307,7 @@ namespace TekSoftwareSuporte
             };
 
             AddSection(actionsPanel, "Autonomia Windows", SectionIconKind.Windows, ref y);
-            AddAction(actionsPanel, "regiaomoeda", "Resetar regiao e moeda para pt-BR", "Restaura Brasil, R$, numeros, datas e horas ao padrao deste Windows para a conta que executa o suporte. Salva backup; saia e entre novamente.", ref y);
+            AddAction(actionsPanel, "regiaomoeda", "Resetar região e moeda para pt-BR", "Restaura Brasil, R$, numeros, datas e horas ao padrao deste Windows para a conta que executa o suporte. Salva backup; saia e entre novamente.", ref y);
             AddAction(actionsPanel, "net35", "Instalar .NET 3.5", "Ativa o recurso NetFX3 pelo DISM, tentando C:\\ e depois Windows Update.", ref y);
             AddAction(actionsPanel, "net48", "Instalar .NET 4.8", "Instala o .NET Framework 4.8 offline usando o instalador do release.", ref y);
             AddAction(actionsPanel, "portacom", "Resetar portas COM", "Remove o ComDB para liberar portas COM reservadas. Pode exigir reinicio.", ref y);
@@ -481,7 +490,8 @@ namespace TekSoftwareSuporte
             int margin = 20;
             headerPanel.SetBounds(margin, 14, width - margin * 2, 42);
             selectLabel.SetBounds(0, 4, headerPanel.Width - 265, 34);
-            searchBox.SetBounds(headerPanel.Width - 248, 8, 248, 27);
+            searchBox.SetBounds(headerPanel.Width - 248, 8, 168, 27);
+            searchButton.SetBounds(headerPanel.Width - 74, 7, 74, 29);
             int footerTop = height - 56;
             int progressTop = footerTop - 100;
             categoryTabs.SetBounds(margin, 70, width - margin * 2, Math.Max(180, progressTop - 80));
@@ -1288,6 +1298,7 @@ namespace TekSoftwareSuporte
             cancelButton.Visible = !enabled;
             closeButton.Visible = enabled;
             searchBox.Enabled = enabled;
+            searchButton.Enabled = enabled;
             if (enabled) UpdateSelectionSummary();
         }
 

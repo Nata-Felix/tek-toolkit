@@ -121,10 +121,15 @@ try {
         Save-Preview $sefaz 'sefaz'
     } finally { $sefaz.Dispose() }
 
-    # Somente criacao/estilo: nao dispara Shown (consultas de adaptadores) nem Load (downloads ou consultas de impressoras).
+    # Exibe sem confirmar: consulta adaptadores e impressoras, mas nao altera o Windows.
     foreach ($name in @('NetworkConfigurationDialog','ServerMigrationDialog','PrinterRemovalDialog')) {
         $window = if ($name -eq 'PrinterRemovalDialog') { New-Window $name } else { New-Window $name @($null) }
-        try { Save-Preview $window $name } finally { $window.Dispose() }
+        try {
+            $window.Show($form)
+            [Windows.Forms.Application]::DoEvents()
+            Assert-ControlBounds $window
+            Save-Preview $window $name
+        } finally { $window.Dispose() }
     }
     Write-Host 'PASS: busca global, acentos, selecao entre abas, plano misto, dimensoes e subjanelas verificadas.'
 } finally { $form.Dispose() }
