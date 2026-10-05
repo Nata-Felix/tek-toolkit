@@ -1378,7 +1378,7 @@ namespace TekSoftware {
 
         public static void NotifyChange() {
             UIntPtr result;
-            SendMessageTimeout(new IntPtr(0xffff), 0x001a, UIntPtr.Zero, "intl", 2, 2000, out result);
+            SendMessageTimeout(new IntPtr(0xffff), 0x001a, UIntPtr.Zero, "intl", 2, 100, out result);
         }
     }
 }
