@@ -126,5 +126,4 @@ finally {
     Set-WinHomeLocation -GeoId $OriginalGeo
     & reg.exe import $Snapshot | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Falha ao restaurar o snapshot original: $Snapshot" }
-    if ("TekSoftware.RegionalSettings" -as [type]) { [TekSoftware.RegionalSettings]::NotifyChange() }
 }

@@ -1362,10 +1362,6 @@ namespace TekSoftware {
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool SetUserGeoID(int geoId);
 
-        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern IntPtr SendMessageTimeout(IntPtr window, uint message,
-            UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
-
         public static string GetDefault(uint type) {
             const uint NoUserOverride = 0x80000000;
             int size = GetLocaleInfoEx("pt-BR", type | NoUserOverride, null, 0);
@@ -1376,10 +1372,6 @@ namespace TekSoftware {
             return data.ToString();
         }
 
-        public static void NotifyChange() {
-            UIntPtr result;
-            SendMessageTimeout(new IntPtr(0xffff), 0x001a, UIntPtr.Zero, "intl", 2, 100, out result);
-        }
     }
 }
 '@
@@ -1432,14 +1424,11 @@ namespace TekSoftware {
         if (-not [TekSoftware.RegionalSettings]::SetUserGeoID(32)) {
             throw "Falha ao definir a localizacao Brasil. Erro Win32: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
         }
-
-        [TekSoftware.RegionalSettings]::NotifyChange()
     }
     catch {
         $Falha = $_
         & reg.exe import $Backup | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            [TekSoftware.RegionalSettings]::NotifyChange()
             LogMsg "Configuracoes regionais anteriores restauradas apos falha."
         }
         else {
