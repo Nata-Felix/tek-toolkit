@@ -1,5 +1,10 @@
 #requires -Version 5.1
 $ErrorActionPreference = 'Stop'
+# A interface e compilada em x86; a reflexao deve usar o mesmo processo de 32 bits.
+if ([Environment]::Is64BitProcess) {
+    & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+    exit $LASTEXITCODE
+}
 $root = Split-Path -Parent $PSScriptRoot
 Add-Type -AssemblyName System.Windows.Forms
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $root 'TekSoftwareSuporte.exe'))
