@@ -132,3 +132,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\gui\build.ps1
 ## Cuidados de uso
 
 O toolkit executa tarefas administrativas e foi criado para atendimento técnico controlado. Antes de usar, valide permissões, backups e compatibilidade com o ambiente de destino.
+
+
+## Ferramentas adicionais de suporte
+
+A central de suporte agora inclui:
+
+- Acesso rápido a comandos administrativos com pesquisa e sugestões.
+- Assistente de adaptadores de rede, DHCP/IP fixo, DNS, teste de conflito de IP, proxy WinHTTP, TLS e reparos Winsock/TCP-IP.
+- Download e abertura de AnyDesk, instalação de TeamViewer e acesso ao site oficial do Hamachi.
+- Assistente de licenças com configurações e ajuda de ativação Windows/Office, atalho identificado para MasGrave (script externo), e instalação Office 2019/2021 pela Office Deployment Tool oficial.
+- Microsoft Print to PDF, correções de registro de impressão e remoção independente de impressoras/drivers.
+- Verificação de atualizações do suporte na release v1.0, comparando SHA-256, com confirmação dentro do aplicativo e recuperação da versão anterior pelo TekSoftwareUpdater.exe.
+
+Mantém os fluxos de TekFarma, Firebird, certificados e reset regional pt-BR. Os downloads de suporte e drivers continuam vinculados às releases do TEK Toolkit.
+
+O fluxo de CI compila as três interfaces e verifica o reset regional, os planos de execução, a sintaxe dos scripts gerados e a integridade/substituição do atualizador. Os testes dos novos assistentes não instalam aplicativos nem alteram rede ou impressoras.

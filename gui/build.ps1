@@ -53,4 +53,9 @@ Build-WinFormsExe `
     -OutputFile "$RepoRoot\TekSoftwareSuporte.exe" `
     -ErrorMessage "Falha ao compilar TekSoftwareSuporte.exe."
 
-Get-Item "$RepoRoot\TekFarmaInstaller.exe", "$RepoRoot\TekSoftwareSuporte.exe" | Select-Object FullName,Length,LastWriteTime
+Build-WinFormsExe `
+    -SourceFile "$PSScriptRoot\TekSoftwareUpdater.cs" `
+    -OutputFile "$RepoRoot\TekSoftwareUpdater.exe" `
+    -ErrorMessage "Falha ao compilar TekSoftwareUpdater.exe."
+
+Get-Item "$RepoRoot\TekFarmaInstaller.exe", "$RepoRoot\TekSoftwareSuporte.exe", "$RepoRoot\TekSoftwareUpdater.exe" | Select-Object FullName,Length,LastWriteTime

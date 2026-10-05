@@ -36,7 +36,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($path in @("suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1")) {
+          foreach ($path in @("suporte.ps1", "suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1", "tests/Test-AdditionalSupportTools.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -50,12 +50,22 @@ jobs:
         timeout-minutes: 5
         shell: powershell
         run: .\tests\Test-RegionalReset.ps1
+      - name: Verify additional support tools
+        timeout-minutes: 5
+        shell: powershell
+        run: .\tests\Test-AdditionalSupportTools.ps1
+      - name: Verify updater replacement and integrity
+        shell: powershell
+        run: |
+          $process = Start-Process -FilePath .\TekSoftwareUpdater.exe -ArgumentList "--self-test" -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Updater self-test failed: $($process.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-interfaces
           path: |
             TekFarmaInstaller.exe
             TekSoftwareSuporte.exe
+            TekSoftwareUpdater.exe
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -82,4 +92,5 @@ jobs:
             suporte_teksoftware.ps1 \
             TekFarmaInstaller.exe \
             TekSoftwareSuporte.exe \
+            TekSoftwareUpdater.exe \
             --clobber

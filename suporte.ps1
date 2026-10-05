@@ -192,7 +192,15 @@ try {
         $CodigoSaida = $GuiProcesso.ExitCode
     }
 
-    Remove-Item -LiteralPath $Destino -Recurse -Force -ErrorAction SilentlyContinue
+    # O atualizador reabre o suporte nesta mesma pasta depois de encerrar o processo atual.
+    if (!(Test-Path -LiteralPath ($GuiExe + ".update-in-progress"))) {
+        $TempRootSuporte = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $DestinoResolvido = [IO.Path]::GetFullPath($Destino)
+        if ($DestinoResolvido.StartsWith($TempRootSuporte, [StringComparison]::OrdinalIgnoreCase) -and
+            [IO.Path]::GetFileName($DestinoResolvido) -like "TekSoftwareSuporteGui_*") {
+            Remove-Item -LiteralPath $DestinoResolvido -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     LimparHistoricoPowerShell
     [Environment]::Exit($CodigoSaida)
 }
