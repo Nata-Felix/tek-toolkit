@@ -87,7 +87,7 @@ namespace TekSoftwareSuporte
         private volatile bool updateCheckFinished;
 
 
-        private static readonly bool PreviewBuild = true;
+        
         private readonly SearchBox searchBox = new SearchBox();
         private readonly Button searchButton = new Button();
         private readonly CompactTabs categoryTabs = new CompactTabs();
@@ -117,11 +117,13 @@ namespace TekSoftwareSuporte
         private readonly List<string> selectedPrintersToRemove = new List<string>();
         private readonly List<string> selectedPrinterDriversToRemove = new List<string>();
 
-        public SupportForm()
+        public SupportForm() : this(false) { }
+
+        public SupportForm(bool skipUpdateCheck)
         {
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            Text = "TEK Toolkit — Prévia";
+            Text = "TEK Toolkit";
             ClientSize = new Size(800, 600);
             MinimumSize = new Size(740, 560);
             StartPosition = FormStartPosition.CenterScreen;
@@ -149,7 +151,7 @@ namespace TekSoftwareSuporte
                 if (e.Control && e.KeyCode == Keys.K) { searchBox.Focus(); searchBox.SelectAll(); e.SuppressKeyPress = true; }
                 if (e.KeyCode == Keys.Escape && searchBox.TextLength > 0) { searchBox.Clear(); e.SuppressKeyPress = true; }
             };
-            if (!PreviewBuild) Shown += delegate { BeginUpdateCheck(); };
+            if (!skipUpdateCheck) Shown += delegate { BeginUpdateCheck(); };
         }
 
         private void BuildLayout()

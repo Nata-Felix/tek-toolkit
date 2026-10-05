@@ -43,7 +43,7 @@ function Assert-ControlBounds($parent) {
         Assert-ControlBounds $control
     }
 }
-$form = New-Window 'SupportForm'
+$form = New-Window 'SupportForm' @($true)
 try {
     $form.Show()
     [Windows.Forms.Application]::DoEvents()
