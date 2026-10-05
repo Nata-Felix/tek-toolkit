@@ -53,6 +53,12 @@ namespace TekSoftwareSuporte
         private readonly ProgressBar progressBar = new ProgressBar();
         private readonly Label progressLabel = new Label();
         private readonly Label currentStepLabel = new Label();
+        private readonly Label activityDetailLabel = new Label();
+        private readonly System.Windows.Forms.Timer activityTimer = new System.Windows.Forms.Timer();
+        private readonly Stopwatch executionClock = new Stopwatch();
+        private DateTime lastActivityUtc;
+        private DateTime estimateUpdatedUtc;
+        private int remainingEstimateSeconds = -1;
         private readonly TextBox logBox = new TextBox();
         private readonly Button executeButton = new Button();
         private readonly Button cancelButton = new Button();
@@ -141,6 +147,9 @@ namespace TekSoftwareSuporte
             }
 
             BuildLayout();
+            activityTimer.Interval = 1000;
+            activityTimer.Tick += delegate { RefreshActivityStatus(); };
+            FormClosed += delegate { activityTimer.Dispose(); };
             ApplyResponsiveLayout();
             toolTip.AutoPopDelay = 12000;
             toolTip.InitialDelay = 350;
@@ -442,9 +451,14 @@ namespace TekSoftwareSuporte
             currentStepLabel.Text = "Selecione as ferramentas e clique em Executar.";
             currentStepLabel.BackColor = CompactTheme.Surface;
             currentStepLabel.ForeColor = CompactTheme.Muted;
-            currentStepLabel.Padding = new Padding(10, 6, 10, 4);
+            currentStepLabel.Padding = new Padding(10, 2, 10, 0);
             currentStepLabel.AutoEllipsis = true;
             progressCard.Controls.Add(currentStepLabel);
+            activityDetailLabel.BackColor = CompactTheme.Surface;
+            activityDetailLabel.ForeColor = CompactTheme.Muted;
+            activityDetailLabel.Padding = new Padding(10, 0, 10, 0);
+            activityDetailLabel.AutoEllipsis = true;
+            progressCard.Controls.Add(activityDetailLabel);
             logLink.Text = "Ver log";
             logLink.LinkColor = CompactTheme.Blue;
             logLink.ActiveLinkColor = CompactTheme.Blue;
@@ -502,7 +516,8 @@ namespace TekSoftwareSuporte
             statusLabel.SetBounds(0, 0, progressCard.Width - 60, 22);
             progressLabel.SetBounds(progressCard.Width - 55, 0, 55, 22);
             progressBar.SetBounds(0, 27, progressCard.Width, 8);
-            currentStepLabel.SetBounds(0, 45, progressCard.Width - 72, 36);
+            currentStepLabel.SetBounds(0, 45, progressCard.Width - 72, 20);
+            activityDetailLabel.SetBounds(0, 65, progressCard.Width - 72, 24);
             logLink.SetBounds(progressCard.Width - 68, 50, 68, 26);
             LayoutFooter(width, footerTop, 56, true);
             ResizeActionSections();
@@ -662,6 +677,11 @@ namespace TekSoftwareSuporte
             }
 
             cancelRequested = false;
+            executionClock.Restart();
+            lastActivityUtc = DateTime.UtcNow;
+            remainingEstimateSeconds = -1;
+            activityDetailLabel.Text = "Calculando estimativa da etapa...";
+            activityTimer.Start();
             completedUnits = 0;
             totalUnits = Math.Max(1, plan.Downloads.Count + plan.Actions.Count);
             progressBar.Value = 0;
@@ -687,10 +707,20 @@ namespace TekSoftwareSuporte
                 {
                     ExecutionProgressInfo progress = e.UserState as ExecutionProgressInfo;
                     currentStepLabel.Text = progress == null ? e.UserState.ToString() : progress.Message;
+                    lastActivityUtc = DateTime.UtcNow;
+                    remainingEstimateSeconds = progress == null ? -1 : progress.EtaSeconds;
+                    estimateUpdatedUtc = DateTime.UtcNow;
+                    activityDetailLabel.Text = progress == null ? "Aguardando informações da etapa..." : progress.Detail;
+                    toolTip.SetToolTip(activityDetailLabel, activityDetailLabel.Text);
+                    RefreshActivityStatus();
                 }
             };
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e)
             {
+                activityTimer.Stop();
+                executionClock.Stop();
+                remainingEstimateSeconds = -1;
+                activityDetailLabel.Text = "Tempo decorrido: " + FormatDuration(executionClock.Elapsed.TotalSeconds);
                 runningProcess = null;
                 cancelButton.Enabled = false;
                 closeButton.Enabled = true;
@@ -944,10 +974,8 @@ namespace TekSoftwareSuporte
                 AppendLog("[INFO] Baixando: " + item.Name);
                 AppendLog("[INFO] Origem do download preparada.");
 
-                using (WebClient client = new WebClient())
-                {
-                    client.DownloadFile(item.Url, destination);
-                }
+                DownloadFileWithVisualProgress(item, destination, bg);
+                if (cancelRequested) return;
 
                 FileInfo fi = new FileInfo(destination);
                 AppendLog("[OK] " + item.Name + " baixado (" + FormatBytes(fi.Length) + ")");
@@ -1238,6 +1266,93 @@ namespace TekSoftwareSuporte
             }
 
             return String.Join("|||", parts.ToArray());
+        }
+
+
+        private static string FormatDuration(double seconds)
+        {
+            TimeSpan duration = TimeSpan.FromSeconds(Math.Max(0, Math.Min(seconds, Int32.MaxValue)));
+            if (duration.TotalHours >= 1)
+                return ((int)duration.TotalHours).ToString() + "h " + duration.Minutes.ToString("00") + "min";
+            if (duration.TotalMinutes >= 1)
+                return ((int)duration.TotalMinutes).ToString() + "min " + duration.Seconds.ToString("00") + "s";
+            return duration.Seconds.ToString() + "s";
+        }
+
+        private static int CalculateDownloadEta(long received, long total, double elapsedSeconds)
+        {
+            if (received <= 0 || total <= 0 || elapsedSeconds < 1 || received > total) return -1;
+            return (int)Math.Min(Int32.MaxValue, Math.Ceiling((total - received) * elapsedSeconds / received));
+        }
+
+        private void RefreshActivityStatus()
+        {
+            if (!executionClock.IsRunning) return;
+            double quietSeconds = (DateTime.UtcNow - lastActivityUtc).TotalSeconds;
+            string elapsed = "Decorrido: " + FormatDuration(executionClock.Elapsed.TotalSeconds);
+            if (cancelRequested) { statusLabel.Text = "Cancelando... · " + elapsed; return; }
+            if (quietSeconds >= 15)
+            {
+                statusLabel.Text = elapsed + " · Sem novo progresso há " + FormatDuration(quietSeconds);
+                return;
+            }
+            if (remainingEstimateSeconds >= 0)
+            {
+                int remaining = Math.Max(0, remainingEstimateSeconds - (int)(DateTime.UtcNow - estimateUpdatedUtc).TotalSeconds);
+                statusLabel.Text = elapsed + (remaining > 0
+                    ? " · Estimativa desta etapa: ~" + FormatDuration(remaining)
+                    : " · Finalizando etapa; a estimativa pode variar");
+            }
+            else statusLabel.Text = elapsed + " · Aguardando progresso da etapa...";
+        }
+
+        private void DownloadFileWithVisualProgress(DownloadItem item, string destination, BackgroundWorker bg)
+        {
+            Exception downloadError = null;
+            bool downloadCancelled = false;
+            Stopwatch clock = Stopwatch.StartNew();
+            long lastReportTicks = 0;
+            using (ManualResetEvent finished = new ManualResetEvent(false))
+            using (WebClient client = new WebClient())
+            {
+                client.Headers.Add(HttpRequestHeader.UserAgent, "TEK-Toolkit/1.1");
+                client.DownloadProgressChanged += delegate(object sender, DownloadProgressChangedEventArgs e)
+                {
+                    long now = clock.ElapsedMilliseconds;
+                    if (now - lastReportTicks < 250 && (e.TotalBytesToReceive <= 0 || e.BytesReceived < e.TotalBytesToReceive)) return;
+                    lastReportTicks = now;
+                    int eta = CalculateDownloadEta(e.BytesReceived, e.TotalBytesToReceive, clock.Elapsed.TotalSeconds);
+                    string size = FormatBytes(e.BytesReceived);
+                    if (e.TotalBytesToReceive > 0) size += " de " + FormatBytes(e.TotalBytesToReceive);
+                    string speed = clock.Elapsed.TotalSeconds >= 1
+                        ? " · " + FormatBytes((long)(e.BytesReceived / clock.Elapsed.TotalSeconds)) + "/s" : "";
+                    int localPercent = e.TotalBytesToReceive > 0
+                        ? (int)Math.Min(100, (double)e.BytesReceived * 100 / e.TotalBytesToReceive) : 0;
+                    bg.ReportProgress(CalcUnitProgress(localPercent),
+                        new ExecutionProgressInfo("Baixando " + item.Name + "...", eta, size + speed, true));
+                };
+                client.DownloadFileCompleted += delegate(object sender, AsyncCompletedEventArgs e)
+                {
+                    downloadError = e.Error;
+                    downloadCancelled = e.Cancelled;
+                    finished.Set();
+                };
+                bg.ReportProgress(CalcUnitProgress(0),
+                    new ExecutionProgressInfo("Baixando " + item.Name + "...", -1, "Conectando ao servidor...", true));
+                client.DownloadFileAsync(new Uri(item.Url), destination);
+                while (!finished.WaitOne(250))
+                    if (cancelRequested) client.CancelAsync();
+            }
+            if (downloadCancelled || cancelRequested)
+            {
+                try { if (File.Exists(destination)) File.Delete(destination); } catch { }
+                return;
+            }
+            if (downloadError != null)
+            {
+                try { if (File.Exists(destination)) File.Delete(destination); } catch { }
+                throw new InvalidOperationException("Falha ao baixar " + item.Name + ": " + downloadError.Message, downloadError);
+            }
         }
 
         private void SetProgress(int value)

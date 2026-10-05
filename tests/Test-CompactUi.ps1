@@ -131,5 +131,126 @@ try {
             Save-Preview $window $name
         } finally { $window.Dispose() }
     }
+
+    Assert-Ui ((Call $form 'CalculateDownloadEta' @([long]100,[long]1000,[double]2)) -eq 18) 'Estimativa deve considerar bytes restantes e velocidade.'
+    Assert-Ui ((Call $form 'CalculateDownloadEta' @([long]0,[long]1000,[double]2)) -eq -1) 'Sem bytes recebidos nao existe estimativa.'
+    Assert-Ui ((Call $form 'CalculateDownloadEta' @([long]100,[long]-1,[double]2)) -eq -1) 'Sem tamanho conhecido nao existe estimativa.'
+    Assert-Ui ((Call $form 'CalculateDownloadEta' @([long]1000,[long]1000,[double]2)) -eq 0) 'Download completo deve ter tempo restante zero.'
+    Assert-Ui ((Call $form 'CalculateDownloadEta' @([long]100,[long]1000,[double]0.2)) -eq -1) 'Estimativa deve aguardar amostra de velocidade.'
+
+    Add-Type -ReferencedAssemblies System.dll,System.Core.dll,System.Windows.Forms.dll -TypeDefinition @'
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Threading;
+using System.Diagnostics;
+using System.ComponentModel;
+using System.Windows.Forms;
+public static class DownloadProgressTest
+{
+    public static void Run(object form, bool cancel)
+    {
+        BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Type type = form.GetType();
+        type.GetField("cancelRequested", flags).SetValue(form, false);
+        type.GetField("totalUnits", flags).SetValue(form, 2);
+        type.GetField("completedUnits", flags).SetValue(form, 0);
+        string path = Path.Combine(Path.GetTempPath(), "tek-download-test-" + Guid.NewGuid().ToString("N"));
+        TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Thread server = new Thread(delegate()
+        {
+            try
+            {
+                using (TcpClient connection = listener.AcceptTcpClient())
+                using (NetworkStream stream = connection.GetStream())
+                {
+                    StreamReader reader = new StreamReader(stream);
+                    string line;
+                    do { line = reader.ReadLine(); } while (!String.IsNullOrEmpty(line));
+                    byte[] header = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n");
+                    stream.Write(header, 0, header.Length);
+                    byte[] chunk = new byte[65536];
+                    for (int i = 0; i < 16; i++) { stream.Write(chunk, 0, chunk.Length); stream.Flush(); Thread.Sleep(120); }
+                }
+            } catch (IOException) { } catch (SocketException) { } catch (ObjectDisposedException) { }
+        });
+        server.IsBackground = true;
+        server.Start();
+        Type itemType = type.Assembly.GetType("TekSoftwareSuporte.DownloadItem", true);
+        object item = Activator.CreateInstance(itemType, new object[] { "http://127.0.0.1:" + port + "/", "test.bin", "arquivo de teste" });
+        bool done = false, sawEta = false, sawSpeed = false;
+        int reports = 0;
+        Exception error = null;
+        BackgroundWorker worker = new BackgroundWorker();
+        worker.WorkerReportsProgress = true;
+        worker.DoWork += delegate
+        {
+            type.GetMethod("DownloadFileWithVisualProgress", flags).Invoke(form, new object[] { item, path, worker });
+        };
+        worker.ProgressChanged += delegate(object sender, ProgressChangedEventArgs e)
+        {
+            reports++;
+            object state = e.UserState;
+            Type info = state.GetType();
+            sawEta |= (int)info.GetField("EtaSeconds").GetValue(state) >= 0;
+            sawSpeed |= ((string)info.GetField("Detail").GetValue(state)).Contains("/s");
+        };
+        worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e) { error = e.Error; done = true; };
+        Stopwatch clock = Stopwatch.StartNew();
+        try
+        {
+            worker.RunWorkerAsync();
+            while (!done && clock.Elapsed.TotalSeconds < 15)
+            {
+                Application.DoEvents();
+                if (cancel && clock.ElapsedMilliseconds >= 500)
+                    type.GetField("cancelRequested", flags).SetValue(form, true);
+                Thread.Sleep(20);
+            }
+            if (!done) throw new Exception("Download de teste nao concluiu.");
+            if (error != null) throw new Exception("Falha no download de teste.", error);
+            if (cancel)
+            {
+                if (File.Exists(path)) throw new Exception("Cancelamento deve remover arquivo parcial.");
+            }
+            else
+            {
+                if (!File.Exists(path) || new FileInfo(path).Length != 1048576) throw new Exception("Download truncado.");
+                if (reports < 2 || !sawEta || !sawSpeed) throw new Exception("Download deve informar bytes, velocidade e estimativa.");
+            }
+        }
+        finally
+        {
+            listener.Stop();
+            server.Join(3000);
+            worker.Dispose();
+            type.GetField("cancelRequested", flags).SetValue(form, false);
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+}
+'@
+    [DownloadProgressTest]::Run($form, $false)
+    [DownloadProgressTest]::Run($form, $true)
+    $clock = Field $form 'executionClock'
+    $clock.Restart()
+    $form.GetType().GetField('lastActivityUtc',$flags).SetValue($form,[DateTime]::UtcNow)
+    $form.GetType().GetField('estimateUpdatedUtc',$flags).SetValue($form,[DateTime]::UtcNow)
+    $form.GetType().GetField('remainingEstimateSeconds',$flags).SetValue($form,90)
+    Call $form 'RefreshActivityStatus'
+    Assert-Ui ((Field $form 'statusLabel').Text.Contains('Estimativa desta etapa')) 'Estimativa deve aparecer na interface.'
+    (Field $form 'currentStepLabel').Text = 'Baixando Firebird...'
+    (Field $form 'activityDetailLabel').Text = '12 MB de 48 MB · 2 MB/s'
+    Save-Preview $form 'download-estimativa'
+    $form.GetType().GetField('lastActivityUtc',$flags).SetValue($form,[DateTime]::UtcNow.AddSeconds(-30))
+    Call $form 'RefreshActivityStatus'
+    Assert-Ui ((Field $form 'statusLabel').Text.Contains('Sem novo progresso')) 'Pausa deve suspender a contagem estimada.'
+    $clock.Stop()
+    Write-Host 'PASS: download local com bytes, velocidade e ETA; cancelamento remove parcial; aviso de pausa e ETA visiveis.'
+
     Write-Host 'PASS: busca global, acentos, selecao entre abas, plano misto, dimensoes e subjanelas verificadas.'
 } finally { $form.Dispose() }
