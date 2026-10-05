@@ -1343,6 +1343,105 @@ function InstalarNet48 {
     throw "Falha ao instalar .NET Framework 4.8."
 }
 
+function ResetarRegiaoMoedaPtBr {
+    # Consulta os padroes do Windows instalado, sem reutilizar personalizacoes.
+    # GetLocaleInfoEx esta disponivel desde o Windows Vista.
+    if (-not ("TekSoftware.RegionalSettings" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace TekSoftware {
+    public static class RegionalSettings {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern int GetLocaleInfoEx(string locale, uint type, StringBuilder data, int size);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetUserGeoID(int geoId);
+
+        public static string GetDefault(uint type) {
+            const uint NoUserOverride = 0x80000000;
+            int size = GetLocaleInfoEx("pt-BR", type | NoUserOverride, null, 0);
+            if (size == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            StringBuilder data = new StringBuilder(size);
+            if (GetLocaleInfoEx("pt-BR", type | NoUserOverride, data, size) == 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return data.ToString();
+        }
+
+    }
+}
+'@
+    }
+
+    # Nomes do registro e constantes LOCALE_* correspondentes do Windows.
+    $Tipos = @{
+        LocaleName = 0x005c; sCountry = 0x0006; sLanguage = 0x0003
+        iCountry = 0x0005; iMeasure = 0x000d; iPaperSize = 0x100a
+        sDecimal = 0x000e; sThousand = 0x000f; sGrouping = 0x0010
+        iDigits = 0x0011; iLZero = 0x0012; iNegNumber = 0x1010
+        sNativeDigits = 0x0013; NumShape = 0x1014; sList = 0x000c
+        sNegativeSign = 0x0051; sPositiveSign = 0x0050
+        sCurrency = 0x0014; sMonDecimalSep = 0x0016; sMonThousandSep = 0x0017
+        sMonGrouping = 0x0018; iCurrDigits = 0x0019
+        iCurrency = 0x001b; iNegCurr = 0x001c
+        sDate = 0x001d; sTime = 0x001e; sShortDate = 0x001f
+        sLongDate = 0x0020; sYearMonth = 0x1006; iDate = 0x0021
+        sTimeFormat = 0x1003; sShortTime = 0x0079; iTime = 0x0023
+        iTimePrefix = 0x1005; iTLZero = 0x0025
+        s1159 = 0x0028; s2359 = 0x0029; iCalendarType = 0x1009
+        iFirstDayOfWeek = 0x100c; iFirstWeekOfYear = 0x100d
+    }
+    $Valores = @{ Locale = "00000416" }
+    foreach ($Item in $Tipos.GetEnumerator()) {
+        $Valores[$Item.Key] = [TekSoftware.RegionalSettings]::GetDefault([uint32]$Item.Value)
+    }
+
+    $Path = "HKCU:\Control Panel\International"
+    $BackupDir = Join-Path $env:LOCALAPPDATA "TEK-Toolkit\Backups\Regional"
+    New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    $Backup = Join-Path $BackupDir ("regional_{0}_{1}.reg" -f (Get-Date -Format "yyyyMMdd_HHmmss"), [guid]::NewGuid().ToString("N"))
+    & reg.exe export "HKCU\Control Panel\International" $Backup /y | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao salvar backup regional. Nenhuma configuracao foi alterada."
+    }
+
+    LogMsg "Usuario que recebera o reset: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+    LogMsg "Backup regional: $Backup"
+
+    try {
+        # Windows 8+: o cmdlet atualiza a cultura do perfil. No Windows 7,
+        # os mesmos formatos sao aplicados diretamente pelas chaves abaixo.
+        if (Get-Command Set-Culture -ErrorAction SilentlyContinue) {
+            Set-Culture -CultureInfo "pt-BR" -ErrorAction Stop
+        }
+        foreach ($Item in $Valores.GetEnumerator()) {
+            New-ItemProperty -Path $Path -Name $Item.Key -Value ([string]$Item.Value) -PropertyType String -Force -ErrorAction Stop | Out-Null
+        }
+        if (-not [TekSoftware.RegionalSettings]::SetUserGeoID(32)) {
+            throw "Falha ao definir a localizacao Brasil. Erro Win32: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+        }
+    }
+    catch {
+        $Falha = $_
+        & reg.exe import $Backup | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            LogMsg "Configuracoes regionais anteriores restauradas apos falha."
+        }
+        else {
+            LogMsg "AVISO: falha ao restaurar automaticamente. Importe o backup: $Backup"
+        }
+        throw $Falha
+    }
+
+    LogMsg "Regiao Brasil e formatos pt-BR restaurados: moeda R$, decimal virgula e milhar ponto."
+    LogMsg "Datas, horas e formatos de moeda seguem os padroes deste Windows."
+    LogMsg "Saia da conta e entre novamente para atualizar todos os aplicativos."
+}
+
 function ResetarPortasCom {
     $Path = "HKLM:\SYSTEM\CurrentControlSet\Control\COM Name Arbiter"
     $Name = "ComDB"
@@ -3888,6 +3987,11 @@ foreach ($Acao in $ListaAcoes) {
         "net48" {
             ExecutarPassoAdmin "Instalar .NET Framework 4.8" {
                 InstalarNet48
+            }
+        }
+        "regiaomoeda" {
+            ExecutarPasso "Resetar regiao e moeda para pt-BR" {
+                ResetarRegiaoMoedaPtBr
             }
         }
         "portacom" {

@@ -274,6 +274,7 @@ namespace TekSoftwareSuporte
             };
 
             AddSection(actionsPanel, "Autonomia Windows", SectionIconKind.Windows, ref y);
+            AddAction(actionsPanel, "regiaomoeda", "Resetar regiao e moeda para pt-BR", "Restaura Brasil, R$, numeros, datas e horas ao padrao deste Windows para a conta que executa o suporte. Salva backup; saia e entre novamente.", ref y);
             AddAction(actionsPanel, "net35", "Instalar .NET 3.5", "Ativa o recurso NetFX3 pelo DISM, tentando C:\\ e depois Windows Update.", ref y);
             AddAction(actionsPanel, "net48", "Instalar .NET 4.8", "Instala o .NET Framework 4.8 offline usando o instalador do release.", ref y);
             AddAction(actionsPanel, "portacom", "Resetar portas COM", "Remove o ComDB para liberar portas COM reservadas. Pode exigir reinicio.", ref y);

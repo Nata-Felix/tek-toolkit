@@ -8,17 +8,67 @@ on:
       - "*.ps1"
       - "*.exe"
       - "gui/**"
+      - "tests/**"
+      - ".github/workflows/publish-bootstrap.yml"
+  pull_request:
+    paths:
+      - "*.ps1"
+      - "*.exe"
+      - "gui/**"
+      - "tests/**"
       - ".github/workflows/publish-bootstrap.yml"
   workflow_dispatch:
 
+concurrency:
+  group: bootstrap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Check PowerShell syntax
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($path in @("suporte_teksoftware.ps1", "gui/build.ps1", "tests/Test-RegionalReset.ps1")) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD $path), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          }
+      - name: Build Windows interfaces
+        shell: powershell
+        run: .\gui\build.ps1
+      - name: Verify regional reset on Windows
+        timeout-minutes: 5
+        shell: powershell
+        run: .\tests\Test-RegionalReset.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-interfaces
+          path: |
+            TekFarmaInstaller.exe
+            TekSoftwareSuporte.exe
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-interfaces
+          path: .
       - name: Upload bootstrap files to v1.0
         env:
           GH_TOKEN: ${{ github.token }}

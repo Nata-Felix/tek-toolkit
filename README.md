@@ -27,6 +27,7 @@ O **TEK Toolkit** transforma procedimentos extensos de implantação e suporte e
 - Preparação de rede, compartilhamentos SMB e mapeamentos.
 - Suspensão e restauração controlada de compartilhamentos durante atualizações.
 - Proteção dos processos do instalador durante o encerramento de aplicações em uso.
+- Reset de região e moeda para o padrão pt-BR do Windows, com backup dos formatos anteriores.
 - Registro detalhado de sucesso, avisos e falhas para diagnóstico.
 
 ## Arquitetura
@@ -54,6 +55,25 @@ Central de suporte:
 ```powershell
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://github.com/Nata-Felix/TEK-Toolkit/releases/download/v1.0/suporte.ps1 | iex
 ```
+
+### Reset de região e moeda
+
+Na central de suporte, abra **Autonomia Windows**, marque
+**Resetar regiao e moeda para pt-BR** e clique em **Executar**.
+A ação restaura a localização Brasil e os formatos nativos pt-BR de moeda,
+números, datas e horas, descartando as personalizações anteriores.
+Os padrões são obtidos do Windows instalado, inclusive a posição do símbolo
+R$ e a apresentação de valores negativos.
+
+O reset se aplica à **conta que executa o suporte**. Se a elevação usar as
+credenciais de outra conta, será essa outra conta que receberá os ajustes.
+Não altera teclado, idioma de exibição, fuso horário, localidade de programas
+não Unicode ou os perfis dos demais usuários.
+
+O backup permanece em `%LOCALAPPDATA%\\TEK-Toolkit\\Backups\\Regional`;
+o caminho completo é informado no log. Para restaurar os formatos anteriores,
+importe o arquivo `.reg` correspondente e saia e entre novamente na conta.
+Faça também esse novo login após o reset para atualizar todos os aplicativos.
 
 ### Redes com conexão HTTPS instável
 
