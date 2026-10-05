@@ -9,8 +9,8 @@ $root = Split-Path -Parent $PSScriptRoot
 Add-Type -AssemblyName System.Windows.Forms
 $assembly = [Reflection.Assembly]::LoadFrom((Join-Path $root 'TekSoftwareSuporte.exe'))
 $flags = [Reflection.BindingFlags]'Public,NonPublic,Instance,Static'
-function Type([string]$name) { return $assembly.GetType('TekSoftwareSuporte.' + $name, $true) }
-function New-Model([string]$name) { return [Activator]::CreateInstance((Type $name), $true) }
+function Resolve-ToolkitType([string]$name) { return $assembly.GetType('TekSoftwareSuporte.' + $name, $true) }
+function New-Model([string]$name) { return [Activator]::CreateInstance((Resolve-ToolkitType $name), $true) }
 function Invoke-Private($target, [string]$name, [object[]]$values = @()) {
     return $target.GetType().GetMethod($name, $flags).Invoke($target, $values)
 }
@@ -72,8 +72,8 @@ try {
         $null = Parse-Script (Invoke-Private $form $method) $method
     }
 
-    $productType = Type 'OfficeProductChoice'
-    $itemType = Type 'OfficeDownloadItem'
+    $productType = Resolve-ToolkitType 'OfficeProductChoice'
+    $itemType = Resolve-ToolkitType 'OfficeDownloadItem'
     foreach ($year in @(2019,2021)) {
         $plan = New-Model 'OfficeDownloadPlan'
         $plan.Year = $year; $plan.LanguageCode = 'pt-br'
