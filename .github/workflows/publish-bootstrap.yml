@@ -19,12 +19,17 @@ on:
       - ".github/workflows/publish-bootstrap.yml"
   workflow_dispatch:
 
+concurrency:
+  group: bootstrap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   validate:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Check PowerShell syntax
@@ -42,6 +47,7 @@ jobs:
         shell: powershell
         run: .\gui\build.ps1
       - name: Verify regional reset on Windows
+        timeout-minutes: 5
         shell: powershell
         run: .\tests\Test-RegionalReset.ps1
       - uses: actions/upload-artifact@v4
