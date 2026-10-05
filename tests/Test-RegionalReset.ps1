@@ -26,6 +26,15 @@ function Assert-Equal {
 function Read-Formats {
     Get-ItemProperty "HKCU:\Control Panel\International"
 }
+function Read-FormatSnapshot {
+    $Key = Get-Item "HKCU:\Control Panel\International"
+    $Valores = [ordered]@{}
+    foreach ($Nome in @($Key.GetValueNames() | Sort-Object)) {
+        $Valores[$Nome] = $Key.GetValue($Nome)
+    }
+    # Evita serializar PSProvider/PSDrive e seus objetos internos.
+    $Valores | ConvertTo-Json -Compress
+}
 function Check-Formats {
     $Atual = Read-Formats
     $Padrao = New-Object System.Globalization.CultureInfo -ArgumentList @("pt-BR", $false)
@@ -84,9 +93,9 @@ try {
         Write-Host "PASS: reset de $Cultura com moeda e formatos personalizados; backup preservado."
     }
 
-    $Antes = Read-Formats | ConvertTo-Json -Depth 5 -Compress
+    $Antes = Read-FormatSnapshot
     ResetarRegiaoMoedaPtBr
-    Assert-Equal (Read-Formats | ConvertTo-Json -Depth 5 -Compress) $Antes "Idempotencia"
+    Assert-Equal (Read-FormatSnapshot) $Antes "Idempotencia"
     Write-Host "PASS: segundo reset preserva os mesmos valores."
 
     # Falha de backup deve impedir qualquer alteracao.
